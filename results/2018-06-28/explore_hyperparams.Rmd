@@ -43,46 +43,30 @@ options(dplyr.print_min = 6, dplyr.print_max = 6)
 
 
 ```{r}
-input_path = "../2018-11-13/"
+input_path = "./results/data1/"
+filesToProcess = dir(path=input_path, pattern = "*.csv$", recursive=T)
 
+pattern.p = "(.*?)_([0-9]+\\.[0-9]+)_([0-9]+\\.[0-9]+)_([0-9]+\\.[0-9]+)_([0-9]+)\\.csv$"
+matches = stringr::str_match_all(pattern=pattern.p, filesToProcess)
 
-data_raw <- fs::path(input_path) %>% dir_ls(regexp = ".*?_run.*?.csv$", recursive = T) %>%
-  map_df(read_csv, .id = "path") 
+read_results = function(x) {
+  #z <<- x
+  #x = matches[[1]]
+  file_name = paste(input_path,x[[1]], sep="/") 
+  table = read_csv(file_name)
+  file_name
+  table = table %>% mutate(#file = x[[1]],
+                           model = x[[2]],
+                           alpha = x[[3]],
+                           beta = x[[4]],
+                           dropout = x[[5]],
+                           mbatch = x[[6]])
+  
+  return(table)
+}
 
-data_raw <- data_raw %>% 
-  mutate(filename = basename(path))
+file.list = lapply(matches, FUN=read_results)
+train_val_dataset <- bind_rows(file.list)
 
-
-data_raw = data_raw %>% mutate(diff_perc = (val_loss - loss)/loss)
-
-
-
-iterations <- data_raw %>%
-   group_by(id, filename) %>% filter(val_loss == min(val_loss)) %>%
-    ungroup() %>% 
-      arrange(path, -val_loss) %>%
-   group_by(filename) %>%
-      mutate(iter = row_number())
-
-iterations %>% mutate(overfit = cut(abs(diff_perc), breaks = c(seq(0, 0.3, 0.1),Inf))) -> iterations
 ```
 
-```{r loss_iterations}
-
-iterations %>% 
-  ggplot(aes(x = iter, y = val_loss, colour = filename)) +
-    geom_point() +
-    scale_y_log10() +
-    theme(legend.position = "bottom")
-  
-```
-```{r loss_iterations}
-
-iterations %>% filter(val_coef_det_k > 0) %>%
-  ggplot(aes(x = iter, y = val_coef_det_k, color = filename)) +
-    geom_point(alpha = 0.5, aes(size=overfit)) +
-    geom_point(data = iterations %>% filter(val_coef_det_k > 0, abs(diff_perc) < 0.1),
-               aes(x = iter, y = val_coef_det_k), color = "red")
-  
-  
-```
