@@ -1,14 +1,16 @@
 ---
 title: "R Notebook"
-output:
-  html_document:
-    df_print: paged
+output: html_notebook
 ---
 
 
 ```{r libraries}
 library(tidyverse)
 library(Biostrings)
+library(rslurm)
+library(purrr)
+library(fs)
+library(readr)
 
 ```
 
@@ -232,9 +234,55 @@ my_get_slurm_out <- function (slr_job, outtype = "raw", wait = TRUE)
 
 
 ```
+Preparing slurm job
+```{r slurm_Test }
+
+test_func2 <- function(element, V1, V2, sequence.x, sequence.y) {
+  c(element = element, V1 = V1, V2 = V2, 
+    ed = adist(sequence.x, sequence.y), 
+    max_char = max(nchar(c(sequence.x, sequence.y))),
+    min_char = min(nchar(c(sequence.x, sequence.x))),
+    which_max = which.max(nchar(c(sequence.x, sequence.y))),
+    globalAlign = list(pairwiseAlignment(DNAString(sequence.x), DNAString(sequence.y), substitutionMatrix = mat, gapOpening = 5, gapExtension = 2, type = "global", scoreOnly = T)),
+    localAlign = list(pairwiseAlignment(DNAString(sequence.x), DNAString(sequence.y), substitutionMatrix = mat, gapOpening = 5, gapExtension = 2, type = "local", scoreOnly = T)))
+}
+
+#testing
+mat <- nucleotideSubstitutionMatrix(match = 1, mismatch = -3, baseOnly = TRUE, type = "DNA")
+sjob <- my_slurm_apply(test_func2, test, jobname = 'alignments', 
+                       slurm_options = list(ntasks=10, account="C3SE2018-1-23"), 
+                       rscript_path = "~/projects/microbes_metagenomics/environments/r_env/bin/Rscript",
+                       conda_env = "r_env", load_module="Anaconda3",
+                       add_objects = "mat", pkgs = c("Biostrings"), 
+                       nodes = 10, cpus_per_node = 10, submit = FALSE)
+command1 = paste("rsync -avP --ignore-existing", paste0("_rslurm_", sjob$jobname), "hebbe:/c3se/users/alezel/Hebbe/projects/DeepExpression/results/2018-08-23")
+system(command1)
+
+#syncing_back
+command2 = paste("rsync -avP --ignore-existing --exclude=\"slurm*.out\" ", paste0("hebbe:/c3se/users/alezel/Hebbe/projects/DeepExpression/results/2018-08-23/", "_rslurm_", sjob$jobname), ".")
+system(command2)
+
+#res_raw <- get_slurm_out(sjob, outtype = 'raw')
+# 
+# res <- bind_rows(lapply(1:length(res_raw), FUN = function(i) {
+#   x = res_raw[i]
+#   tibble(element = x[[1]]$element,
+#          V1 = x[[1]]$V1,
+#          V2 = x[[1]]$V2,
+#          ed = x[[1]]$ed,
+#          max_char = x[[1]]$max_char,
+#          min_char = x[[1]]$min_char,
+#          which_max = x[[1]]$which_max,
+#          globalAlign = x[[1]]$globalAlign,
+#          localAlign = x[[1]]$localAlign)
+
+#}))
 
 
-This just prepares slurm job scripts to run the alignments
+
+```
+
+
 
 ```{r slurm_alignment}
 align_func <- function(element, V1, V2, sequence.x, sequence.y) {
@@ -282,8 +330,6 @@ results <- bind_rows(lapply(1:length(res_raw), FUN = function(i) {
 
 ```
 
-
-collects alignments
 ```{r getting_alignments, cache=T}
 jobname = 'alignments'
 results = paste0("_rslurm_", jobname, collapse = "")
@@ -307,7 +353,7 @@ save(list = eval(object_name), file = file_path)
 
 
 ```{r make_distances}
-library(matrixcalc) # for upper.triangle function
+library(matrixcalc)
 
 load("./res_alignments.explore_sequences.RData")
 
@@ -319,91 +365,48 @@ tidy_pca = function(x) {
 
 res_alignments <- res_alignments %>% ungroup() %>% mutate(ed_normalized = ed/max_char)
 
-res_alignments_nested <- res_alignments %>% group_by(element) %>% dplyr::select(element, V1, V2, ed_normalized) %>% nest()
 
-make_matrix <- function(x){
-  df_wide <- x %>%
+df_wide <- res_alignments %>% filter( element == "3UTR") %>% 
+  dplyr::select(V1, V2, ed_normalized) %>% 
   spread(V2, ed_normalized) %>% tidy_pca()
-  
-  common = base::intersect(rownames(df_wide), colnames(df_wide))
 
-  df_wide = df_wide[match(common, rownames(df_wide)), match(common, colnames(df_wide))]
+common = base::intersect(rownames(df_wide), colnames(df_wide))
 
-  df_wide[is.na(df_wide)] <- 0
+df_wide = df_wide[match(common, rownames(df_wide)), match(common, colnames(df_wide))]
 
-  distance = df_wide
-  distance <- distance + t(upper.triangle(distance))
+df_wide[is.na(df_wide)] <- 0
 
-  distance[upper.tri(distance)] = 0
-  distance = distance + t(lower.triangle(distance))
-  return(distance)
-}
-  
-res_alignments_nested <- res_alignments_nested %>%
-  mutate(dist_matrix = map(data, make_matrix))
 
-res_alignments %>%
-  ggplot(aes(x = ed_normalized)) +
-    geom_histogram() +
-    facet_wrap(~element, scales = "free")
-  
-  
+data = df_wide
+
+
+data <- data + t(upper.triangle(data))
+
+data[upper.tri(data)] = 0
+data = data + t(lower.triangle(data))
+
+
+
 
 ```
+ - Clustering on based on Edit distance
 
- - tSNE on based on Edit distance
 
-```{r tsne, fig.width=15}
+```{r tsne}
+
 library(Rtsne)
-library(multidplyr)
 
-my_tsne <- function(data, perp = c(50, 100)) {
-  list_tsne = list()
-  for (i in perp) {
-    
-    list_tsne <- lappend(list_tsne, Rtsne(as.dist(data), is_distance = TRUE, perp = i, check_duplicates = FALSE, max_iter = 500))
-    
-  }  
-  return(list_tsne)
+list_tsne = list()
+for (i in c(2, 5, 10, 30, 50, 100)) {
+ list_tsne <-lappend(list_tsne, Rtsne(as.dist(data), is_distance = TRUE, perp = i ) )
 }
 
 
-cluster <- create_cluster(4)
-
-res_alignments_nested_party <- res_alignments_nested %>% 
-  partition(element, cluster = cluster)
-cluster_library(res_alignments_nested_party, c("tidyverse", "Rtsne"))
-cluster_copy(res_alignments_nested_party, my_tsne)
-cluster_copy(res_alignments_nested_party, lappend)
-
-alignemnets_tsne <- res_alignments_nested_party %>%
-  mutate(tsne = map(dist_matrix, my_tsne, perp = c(5,10,30)))
-
-get_tsne <- function(data) {
-  tmp = lapply(1:length(data), function(i) {
-          tibble(perplexity = data[[i]]$perplexity,
-                 Y1 = data[[i]]$Y[,1],
-                 Y2 = data[[i]]$Y[,2])
-  })
- return(bind_rows(tmp))
+for ( i in 1:length(list_tsne) ) {
+  plot(list_tsne[[i]]$Y )
 }
 
-
-
-alignemnets_results <- alignemnets_tsne %>% collect() %>%
-  mutate(tsne_res = map(tsne, get_tsne)) %>% unnest(tsne_res)
-
-alignemnets_results %>%
-  ggplot(aes(x = Y1, y = Y2)) +
-    geom_point(size = 0.1, alpha = 0.1) +
-    facet_wrap(element~perplexity, scales = "free")
-     theme(
-       #strip.background = element_blank(),
-      #        strip.text.x = element_blank(),
-           aspect.ratio = 1)
 ```
-
-
 ```{r features_kmers}
 
 seq_data_long <- seq_data %>% 
@@ -414,10 +417,11 @@ seq_data_long <- seq_data %>%
 names(seq_data_long) = c("name", "element", "dna_string")
   
 
+
 features <- bind_cols(seq_data_long, 
-          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 2, step = 1, as.prob = T)), #2mers
-          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 3, step = 1, as.prob = T)), #3mers
-          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 4, step = 1, as.prob = T))) #4mers
+          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 2, step = 1, as.prob = T)),
+          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 3, step = 1, as.prob = T)),
+          as.tibble(oligonucleotideFrequency(DNAStringSet(seq_data_long$dna_string), width = 4, step = 1, as.prob = T)))
 
 
 library(stringi)
@@ -447,7 +451,9 @@ features_data_spread <- features_data %>%
   nest() %>%
   mutate(spread_data = map(data, spread, feature, frequency),
          data_matrix = map(spread_data, df2matrix))
- 
+  
+
+
 ```
 
 ```{r Rtsne_features, fig.width=20}
@@ -464,7 +470,7 @@ my_tsne <- function(data, perp = c(5, 30, 50)) {
 }
 
 
-cluster <- create_cluster(12)
+cluster <- create_cluster(8)
 
 features_data_spread_party <- features_data_spread %>% 
   partition(element, nmer, cluster = cluster)
@@ -473,8 +479,7 @@ cluster_copy(features_data_spread_party, my_tsne)
 cluster_copy(features_data_spread_party, lappend)
 
 features_tsne <- features_data_spread_party %>%
-  mutate(tsne = map(data_matrix, my_tsne, perp = c(5, 50, 100, 1000)))
-
+  mutate(tsne = map(data_matrix, my_tsne, perp = c(5, 30, 50, 100)))
 
 
 
@@ -489,11 +494,8 @@ get_tsne2 <- function(data_tsne, data) {
 }
 
 
-
-
 features_tsne_results <- features_tsne %>% collect() %>%
-  mutate(tsne_res = map2(tsne, data_matrix,  get_tsne2)) %>% unnest(tsne_res)
-
+  mutate(tsne_res = map(tsne, get_tsne)) %>% unnest(tsne_res)
 
 features_tsne_results %>%
   ggplot(aes(x = Y1, y = Y2)) +
@@ -506,11 +508,24 @@ features_tsne_results %>%
     
 
 ```
+# trying tsne on individual elements using kmer probabilitites
+```{r tnseindividual_features}
 
+features_tsne2 <- features_data_spread %>% 
+  filter(element == "5UTR", nmer == "3mer") %>%
+  mutate(tsne = map(data_matrix, my_tsne, perp = c(50, 100, 500)))
 
-```{r binning, fig.width=20}
+features_tsne2 %>% unnest(spread_data) %>%
+  mutate(tsne_res = map(tsne, get_tsne)) %>% unnest(tsne_res) %>%
+    ggplot(aes(x = Y1, y = Y2)) +
+      geom_point(size = 0.1, alpha = 0.1) +
+      facet_wrap(element+nmer~perplexity, scales = "free")
+       
+```
+
+```{r binning}
 library(scales)
-
+#library("bestNormalize")
 
 expression_data_raw <- read_delim("../../data/2018-09-19/Scerevisiae_DDE_QC-filtered-18_7_18.csv", delim = ";")
 expression_data_raw <- expression_data_raw %>% dplyr::select(-X1)
@@ -540,39 +555,14 @@ expression_median %>%
     geom_vline(xintercept = quantiles) +
     scale_x_log10(breaks = c(0, 10, 100, 1000, 10000))
 
-```
+seq_data_long <- seq_data %>% 
+  select(-coding) %>% 
+  gather(element, sequence, -name) %>% filter(!is.na(sequence) | sequence != "")
 
-```{r joy_division, fig.path="joy_division.png", fig.width=15}
-
-library("ggridges")
-
-
-joy_division_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-                            axis.ticks.y =  element_blank(), 
-                            panel.background = element_rect(fill = "black"),
-                            plot.background = element_rect(fill = "black"),
-                            axis.text.x = element_text(colour="white", size=14),
-                            axis.text.y = element_blank(),
-                            axis.text.x.bottom = element_text(colour="white", size=14),
-                            axis.title.x = element_text(colour = "white", size=20),
-                            axis.title.y = element_text(colour = "white", size=20),
-                            axis.line.x = element_line(colour = "white"))
-
-selected <- sample(colnames(expression_data_raw), 500)
-expression_data_long %>% filter(value > 1, gene %in% selected) -> toPlot
-
-p_joy_division <- toPlot %>% mutate(gene = fct_reorder(gene, value, .fun = median, na.rm=T)) %>%
-    ggplot(aes(x = value , y = factor(gene))) +
-    geom_density_ridges(scale=30, colour = "white", fill="black", size=0.25) +
-    ylab("Gene sorted by median expression level among >3000 experiments") +
-    xlab("mRNA expression levels, log-scaled TMP") +
-    scale_x_log10(breaks = c(0, 10, 100, 1000, 10000, 100000)) +
-    joy_division_theme + theme(aspect.ratio = 3/4)
-  
-ggsave("./joydivisioin.pdf", p_joy_division, width = 20, height = 20)
+seq_data_binned <-seq_data_long %>% left_join(expression_median, by = c("name" = "gene")) %>% filter(!is.na(bin))
+save_object(seq_data_binned, save_data_dir)
 
 ```
-
 
 ```{r aligning}
 
@@ -626,8 +616,6 @@ cluster_copy(seq_data_long_party, motifs)
 seq_motifs <- seq_data_long_party %>% group_by(name, element, sequence) %>% mutate(motifs = getMotifs(sequence, motifs))
 seq_motifs %>% collect() %>% save(file = "./seq_motifs.RData")
 ```
-
-
 #plotting counts(bad idea)
 ```{r, fig.width=10}
 
@@ -657,10 +645,9 @@ seq_motifs_long %>% filter(!is.na(bin)) %>% group_by(element, bin,  motifs) %>%
     scale_y_log10()
 ```
 
-#motif enrichment example
+#motif enrichment
 
 ```{r, fig.height=15}
-
 library(PWMEnrich)
 library(MotifDb)
 library(PWMEnrich.Dmelanogaster.background)
@@ -698,9 +685,8 @@ registerCoresPWMEnrich(NULL)
 
 
 ```
-# Calculating background for enrichments
-```{r enrich_background}
-seq_targets <- seq_data_binned %>% filter(element == "prom") %>% unite("element_bin",  c("element", "bin"), remove = F)
+```{r}
+seq_targets <- seq_data_binned %>% unite("element_bin",  c("element", "bin"), remove = F)
   
   
 #making background sequences using antijoin with targets
@@ -733,6 +719,7 @@ seq_full = left_join(seq_tgt, seq_bg, by=c("element_bin"="target"))
 ####creating motif bg
 library(PWMEnrich)
 library(MotifDb)
+library(PWMEnrich.Dmelanogaster.background)
 
 
 d = values(MotifDb)
@@ -750,60 +737,30 @@ for(i in dm.sel){
     motifs[[length(motifs)+1]] = apply(round(MotifDb[[i]] * seq.count), 1:2, as.integer)
 }
 
-#registerCoresPWMEnrich(4)
+registerCoresPWMEnrich(4)
 seq_full<- seq_full %>% 
   mutate(bg_motif = map(DNAStringSet_bg, 
                         .f = function(data) {
                             makeBackground(motifs, bg.seq=data, type="logn")              
                         }))
-#registerCoresPWMEnrich(NULL)
+registerCoresPWMEnrich(NULL)
 save_object(seq_full, save_data_dir)
 
 
 ```
-#enrichment results
 ```{r}
 
 load("./output_files/seq_full.explore_sequences.RData")
-
-
-#registerCoresPWMEnrich(4)
-enrichment_results <- seq_full %>% filter(grepl("prom", element_bin)) %>% 
+registerCoresPWMEnrich(4)
+enrichment_results <- seq_full %>% filter(row_number() == 1) %>%
   mutate(enrichment_res = map2(DNAStringSet_target, bg_motif, motifEnrichment, group.only = T))
-#registerCoresPWMEnrich(NULL)
+registerCoresPWMEnrich(NULL)
+
+
+enrichment_results$enrichment_res[[1]]$group.bg <0.01
+
 
 ```
-
-```{r vizualizing_enrichments, fig.width=10}
-p1 = enrichment_results %>%
-  mutate(group.bg = map(enrichment_res, .f = function(x){return(x$group.bg)})) %>%
-  unnest(group.bg) %>%
-  group_by(element_bin) %>% summarize(counts = sum(group.bg < 0.05)) %>%
-  ggplot(aes(x =element_bin, y =counts)) +
-        geom_bar(stat = "identity") +
-  coord_flip() +
-  xlab("") + ylab("") +
-  theme_bw() +
-  theme(aspect.ratio = 1/5,legend.position = "none",
-        axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
-
-p2  = enrichment_results %>%
-  mutate(group.bg = map(enrichment_res, .f = function(x){return(x$group.bg)})) %>%
-  unnest(group.bg) %>% mutate(value = as.integer(group.bg < 0.05 )) %>% group_by(element_bin) %>% mutate(motif = row_number()) %>%
-  ggplot(aes(x = motif, y = element_bin, fill=factor(value),  width = 10)) +
-    geom_tile(colour="white")  +
-    scale_fill_manual(values = c("white", "black")) +
-    theme_bw() +
-    xlab("") + ylab("")+
-    theme(legend.position = "none",
-          aspect.ratio = 1/5)
-
-getwd()
-```
-
-
-
 
 # Analysis of single molecule data.
 
@@ -841,44 +798,3 @@ toPlot %>%
       
 ggsave("./minion.png", plot = last_plot())
 ```
-
-
-### results from big data group
-```{r}
-file_name = "../../data/2019-02-04/all_nested_cv_results_log_scaling_2019.xlsx"
-data_raw <- readxl::read_xlsx(file_name)
-
-data_raw %>% 
-  filter(!grepl(x=features, pattern = "codon")) %>%
-  tidyr::gather(algorithm, value,  -data, -features, -score) %>% tidyr::spread(score, value) %>%
-  ggplot(aes(x = algorithm, y = mean, fill = features)) +
-    geom_bar(stat = "identity", position = position_dodge()) +
-    geom_errorbar(aes(ymin=mean-std, ymax=mean+std), width = 0.2, position=position_dodge(0.9)) + 
-    facet_wrap(.~data) +
-    theme(legend.position = "bottom")
-
-data_raw %>%  
-  #filter(!grepl(x=features, pattern = "codon")) %>% 
-  filter(data == "rsd2YuK5s", features %in% c("codon", "kmers", "stability", "stability_kmers", "codon_stability_kmers")) %>%
-  tidyr::gather(algorithm, value,  -data, -features, -score) %>% spread(score, value) %>%
-  filter(algorithm %in% c("rfreg", "lr"))  %>%
-  mutate(features = as.factor(features)) %>%
-  mutate(features = fct_relevel(features, c("kmers", "stability", "stability_kmers"))) %>%
-  ggplot(aes(x = algorithm, y = mean, fill = features)) +
-    geom_bar(stat = "identity", position = position_dodge()) +
-    geom_errorbar(aes(ymin=mean-std, ymax=mean+std), width = 0.2, position=position_dodge(0.9)) + 
-    theme(legend.position = "right", aspect.ratio = 8/5) +
-    ylab("10-fold cross-validated, R2 (mean)") +
-    xlab("Algorithm")
-    
-  
-  
-```
-
-
-
-
-
-
-
-
