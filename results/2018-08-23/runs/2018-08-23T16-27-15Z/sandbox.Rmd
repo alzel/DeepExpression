@@ -1,0 +1,51 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Exploring hyperparameters, which parameters is most important for learning. 
+
+
+
+
+```{r setup}
+
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "sandbox"
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+```
+
+```{r libraries}
+library(tidyverse)
+library(keras)
+```
+
+
+
+```{r test1}
+
+library(tfruns)
+training_run("mnist_mlp.R")
+
+
+
+```

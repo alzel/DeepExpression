@@ -1,0 +1,88 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Exploring hyperparameters, which parameters is most important for learning. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = getwd())
+```
+
+
+
+```{r}
+library(tidyverse)
+
+
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "explore_hyperparams"
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+```
+
+
+```{r}
+input_path = "../2018-11-13/"
+
+
+data_raw <- fs::path(input_path) %>% dir_ls(regexp = ".*?_run.*?.csv$", recursive = T) %>%
+  map_df(read_csv, .id = "path") 
+
+data_raw <- data_raw %>% 
+  mutate(filename = basename(path))
+
+
+data_raw = data_raw %>% mutate(diff_perc = (val_loss - loss)/loss)
+
+
+
+iterations <- data_raw %>%
+   group_by(id, filename) %>% filter(val_loss == min(val_loss)) %>%
+    ungroup() %>% 
+      arrange(path, -val_loss) %>%
+   group_by(filename) %>%
+      mutate(iter = row_number())
+
+iterations %>% mutate(overfit = cut(abs(diff_perc), breaks = c(seq(0, 0.3, 0.1),Inf))) -> iterations
+```
+
+```{r loss_iterations}
+
+iterations %>% 
+  ggplot(aes(x = iter, y = val_loss, colour = filename)) +
+    geom_point() +
+    scale_y_log10() +
+    theme(legend.position = "bottom")
+  
+```
+```{r loss_iterations}
+
+iterations %>% filter(val_coef_det_k > 0) %>%
+  ggplot(aes(x = iter, y = val_coef_det_k, color = filename)) +
+    geom_point(alpha = 0.5, aes(size=overfit)) +
+    geom_point(data = iterations %>% filter(val_coef_det_k > 0, abs(diff_perc) < 0.1),
+               aes(x = iter, y = val_coef_det_k), color = "red")
+  
+  
+```

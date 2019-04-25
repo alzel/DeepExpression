@@ -1,0 +1,196 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Exploring hyperparameters, which parameters is most important for learning. 
+
+
+
+
+```{r setup}
+
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "sandbox"
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+```
+
+```{r libraries}
+library(tidyverse)
+library(keras)
+library(tfruns)
+```
+
+
+
+```{r test1}
+
+for (run in 1:2)
+    hyper_params = list(dropout1 = eval(runif(1,0,1)), dropout2 = eval(runif(1,0,1)))
+    training_run('mnist_mlp.R', flags = hyper_params)
+
+```
+ 
+ 
+```{python}
+import numpy as np
+t_min, t_max = 0, 30
+resolution = 0.1
+
+def time_series(t):
+    return t * np.sin(t) / 3 + 2 * np.sin(t*5)
+
+def next_batch(batch_size, n_steps):
+    t0 = np.random.rand(batch_size, 1) * (t_max - t_min - n_steps * resolution)
+    Ts = t0 + np.arange(0., n_steps + 1) * resolution
+    ys = time_series(Ts)
+    
+    return ys[:, :-1].reshape(-1, n_steps, 1), ys[:, 1:].reshape(-1, n_steps, 1)
+
+
+t = np.linspace(t_min, t_max, int((t_max - t_min) / resolution))
+
+n_steps = 20
+t_instance = np.linspace(12.2, 12.2 + resolution * (n_steps + 1), n_steps + 1)
+
+batch = next_batch(50, 20)
+
+
+batch_size = 5
+
+
+t0 = np.random.rand(batch_size, 1) * (t_max - t_min - n_steps * resolution)
+print(t0.shape)
+
+Ts = t0 + np.arange(0., n_steps + 1) * resolution
+print(Ts.shape)
+print(t0)
+print(np.arange(0., n_steps + 1))
+
+
+
+ys = time_series(Ts)
+print(next_batch(5, 20)[1].shape)
+
+X_batch, y_batch = next_batch(1, n_steps)
+
+print(X_batch[0].shape)
+print(y_batch[0].shape)
+
+
+```
+ 
+```{r generate_time_series}
+ 
+t_min = 0
+t_max = 60
+resolution = 0.1
+
+time_series <- function(t) {
+  return (t*sin(t) / 3 + 2 * sin(t*5))
+}
+  
+
+batch_size = 5
+n_steps = 20
+
+next_batch <- function(batch_size, n_steps) {
+  t0 = matrix(runif(batch_size), ncol = 1)  * (t_max - t_min - n_steps * resolution)
+  Ts = t0 %*% matrix(rep(1, n_steps+1), nrow = 1) + matrix(rep(seq(0, n_steps)*resolution, batch_size), nrow = batch_size, byrow = T)
+  ys = time_series(Ts)
+
+  return(list(x = ys[,-ncol(ys)], y = ys[,2:ncol(ys)]))
+}
+ 
+
+
+
+
+t = seq(t_min, t_max, length.out = round((t_max - t_min) / resolution))
+
+n_steps = 20
+t_instance = seq(12.2, 12.2 + resolution * (n_steps + 1), length.out = n_steps + 1)
+
+
+ggplot() +
+  geom_point(aes(x = t, y = time_series(t)), size = 0.5) +
+  geom_point(aes(x = t_instance, 
+                 y = time_series(t_instance)), colour = "blue", size = 0.5)
+
+ggplot() +
+  geom_point(aes(x = t_instance[-length(t_instance)], 
+                 y = time_series(t_instance[-length(t_instance)])), colour = "blue", size = 2) +
+  geom_point(aes(x = t_instance[2:length(t_instance)], 
+                 y = time_series(t_instance[2:length(t_instance)])), colour = "red", size = 1)
+
+
+
+```
+
+```{r generate_data}
+
+batch_size = 50
+n_steps = 20
+SIZE = 1500
+dataset = next_batch(50, n_steps)
+
+X_train = dataset$x
+Y_train = dataset$y
+
+X_train = array(X_train, dim = c(nrow(X_train), n_steps, 1))
+Y_train = array(Y_train, dim = c(nrow(Y_train), n_steps, 1))
+
+model = keras_model_sequential()
+
+model %>%
+      layer_lstm(units           = 100, 
+                input_shape      = c(n_steps, 1), 
+                batch_size       = batch_size,
+                return_sequences = TRUE, 
+                stateful         = FALSE) %>% 
+      layer_dense(units = 1)
+
+lrate = 0.001
+opt <- optimizer_adam(lr = lrate)
+model %>% 
+    compile(loss = 'mse', optimizer = opt )
+
+history <- model %>% fit(x = X_train, 
+                         y = Y_train, 
+                         batch_size = batch_size,
+                         epochs = 1000, 
+                         verbose = 1, 
+                         shuffle = FALSE )
+
+
+x_test = array(matrix(rep(time_series(t_instance[-1]), batch_size), ncol=n_steps, byrow = T), dim=c(batch_size,n_steps,1))
+
+predicted = model %>% predict(x_test, batch_size = batch_size) %>%.[1,,1] 
+
+ggplot() +
+  geom_point(aes(x = t_instance[-length(t_instance)], 
+                 y = time_series(t_instance[-length(t_instance)])), colour = "blue", size = 2) +
+  geom_point(aes(x = t_instance[-length(t_instance)], 
+                 y = predicted, colour = "red", size = 1))
+
+
+```

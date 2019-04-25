@@ -1,0 +1,61 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Linear models results from Azam
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = getwd())
+```
+
+
+```{r}
+library(tidyverse)
+
+
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "linear_models"
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+```
+
+```{r}
+
+data_file = "../../data/2019-02-04/all_nested_cv_results_log_scaling_2019.xlsx"
+data_raw = readxl::read_xlsx(data_file)
+
+```
+
+```{r, fig.width=10}
+data_raw %>% filter(!grepl(features, pattern = "codon"), grepl(score, pattern ="median|^std$")) %>%
+  reshape2::melt(id=c("data", "features", "score")) %>%
+  reshape2::dcast(formula = "data+features+variable~score") %>%
+  ggplot(aes(x = variable, y = median, fill = features)) +
+    geom_bar(stat="identity", position = "dodge") +
+    geom_errorbar(aes(ymin=median-std, ymax=median+std), width=.5, position=position_dodge(.9)) + 
+    facet_wrap(~data, scales = "free") +
+    
+  
+  
+
+```

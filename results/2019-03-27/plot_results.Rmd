@@ -1,0 +1,551 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r libraries}
+library(tidyverse)
+library(UpSetR)
+library(ComplexHeatmap)
+library(zoo) 
+library(ggthemes)
+
+```
+
+
+```{r setup}
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "plot_results"
+save_data_dir = "output_files"
+dir.create(save_data_dir, showWarnings = FALSE)
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+
+figure_dir = "./output_plots"
+dir.create(figure_dir, showWarnings = FALSE)
+
+
+save_object <- function(object, save_data_dir) {
+  object_name = deparse(substitute(object))
+  file_name = paste(object_name, fun_name, "RData", sep = ".")
+  file_path = paste(save_data_dir, file_name, sep="/")
+  save(list = eval(object_name), file = file_path)
+}
+
+tidy_pca = function(x) {
+  x.matrix <- x[,-1] %>% as.matrix()
+  rownames(x.matrix) <- as.data.frame(x)[,1]
+  return(x.matrix)
+}
+```
+
+
+```{r load_data}
+expression_data_raw <- read_delim("../../data/2018-09-19/Scerevisiae_DDE_QC-filtered-18_7_18.csv", delim = ";")
+expression_data_raw <- expression_data_raw %>% dplyr::select(-X1)
+# human_raw <- read_delim("/vault/DeepExpression/data/hsapiens_se.tsv.sampled", delim = "\t", col_names = F)
+# 
+
+```
+
+
+```{r fig.path="joy_division.png", fig.width=15}
+expression_data_long <- expression_data_raw %>% as.tibble %>% mutate(experiment = row_number()) %>% gather(gene, value, -experiment)
+
+library("ggridges")
+
+
+joy_division_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                            axis.ticks.y =  element_blank(), 
+                            panel.background = element_rect(fill = "black"),
+                            plot.background = element_rect(fill = "black"),
+                            axis.text.x = element_text(colour="white", size=14),
+                            axis.text.y = element_blank(),
+                            axis.text.x.bottom = element_text(colour="white", size=14),
+                            axis.title.x = element_text(colour = "white", size=20),
+                            axis.title.y = element_text(colour = "white", size=20),
+                            axis.line.x = element_line(colour = "white"))
+
+
+white_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                    axis.ticks.y =  element_blank(), 
+                    panel.background = element_rect(fill = "white"),
+                    plot.background = element_rect(fill = "white"),
+                    axis.text.x = element_text(colour="black", size=14),
+                    axis.text.y = element_blank(),
+                    axis.text.x.bottom = element_text(colour="black", size=14),
+                    axis.title.x = element_text(colour = "black", size=20),
+                    axis.title.y = element_text(colour = "black", size=20),
+                    axis.line.x = element_line(colour = "black"))
+p_joy_division + joy_division_theme + theme(aspect.ratio = 3/4)
+
+selected <- sample(colnames(expression_data_raw), 500)
+expression_data_long %>% filter(value > 1, gene %in% selected) -> toPlot
+
+p_joy_division <- toPlot %>% mutate(gene = fct_reorder(gene, value, .fun = median, na.rm=T)) %>%
+    ggplot(aes(x = value , y = factor(gene))) +
+    geom_density_ridges(scale=30, colour = "white", fill="black", size=0.25) +
+    ylab("Density of expression level for each gene across 6000 RNA-SEQ experiments") +
+    xlab("mRNA expression levels across 6000 RNA-SEQ experimens, log-scaled TMP") +
+    scale_x_log10(breaks = c(0, 10, 100, 1000, 10000, 100000)) 
+    
+figure_path = paste(figure_dir, "joy_division_black.pdf", sep = "/")
+ggsave(figure_path, p_joy_division + joy_division_theme + theme(aspect.ratio = 3/4), width = 20, height = 20)
+
+
+figure_path = paste(figure_dir, "joy_division_white.pdf", sep = "/")
+ggsave(figure_path, p_white_division + white_theme + theme(aspect.ratio = 3/4), width = 20, height = 20)
+
+
+p_white_division
+```
+```{r}
+expression_data_raw %>%
+  psych::describe(quant=c(0.025, 0.16, .25, 0.5,0.84, .75, 0.975)) %>%
+  as_tibble(rownames = "ORF") -> expression_data_raw.summary
+
+expression_data_long <- expression_data_raw %>% as.tibble %>% mutate(experiment = row_number()) %>% gather(gene, value, -experiment)
+
+#human_raw %>% spread(key=X2, value=X3) %>% select(-X1) -> human_raw_wide
+
+# 
+# human_raw_wide %>% 
+#   psych::describe(quant=c(0.025, 0.16, .25, 0.5,0.84, .75, 0.975)) %>%
+#   as_tibble(rownames = "ORF") -> human_raw_wide.summary
+
+#GAPDH
+expression_data_long %>% filter(gene == "YJL052W") %>%
+  ggplot(aes(x = value)) +
+  geom_density() +
+  scale_x_log10()
+
+
+p_yeast <- expression_data_raw.summary %>% arrange(Q0.5) %>% filter(Q0.5>0) %>%
+  mutate(ORF = factor(ORF, levels = ORF)) %>%
+  ggplot() +
+    geom_line(aes(x = as.numeric(ORF), y = Q0.5/2)) +
+    geom_line(aes(x = as.numeric(ORF), y = Q0.5*2)) +
+   
+    geom_ribbon(aes(x = as.numeric(ORF),
+                     ymax =  Q0.84,
+                     ymin = Q0.16 ), alpha=0.5, fill = "blue") +
+    geom_ribbon(aes(x = as.numeric(ORF),
+                     ymax =  Q0.975,
+                     ymin = Q0.025 ), alpha=0.2, fill = "blue") +
+    geom_line(aes(x = as.numeric(ORF), y = Q0.5), colour = "red") +
+    labs(x = "Yeast protein coding gene" ,
+         y = "Gene expression levels across >6000 experiments,log-scaled TMP"  ) +   
+    scale_y_log10() +
+    coord_flip() + theme_few()  + theme(aspect.ratio = 5/8)
+
+        
+figure_path = paste(figure_dir, "p_yeast.pdf", sep = "/")
+ggsave(figure_path, p_yeast)
+# p_human <- human_raw_wide.summary %>% arrange(Q0.5) %>% filter(Q0.5>5) %>%
+#   mutate(ORF = factor(ORF, levels = ORF)) %>%
+#   ggplot() +
+#     geom_line(aes(x = as.numeric(ORF), y = Q0.5/2)) +
+#     geom_line(aes(x = as.numeric(ORF), y = Q0.5*2)) +
+#     geom_line(aes(x = as.numeric(ORF), y = Q0.5)) +
+#     geom_ribbon(aes(x = as.numeric(ORF),
+#                      ymax =  Q0.84,
+#                      ymin = Q0.16 ), alpha=0.3, fill = "blue") +
+#     # geom_ribbon(aes(x = as.numeric(ORF),
+#     #                  ymax =  Q0.975,
+#     #                  ymin = Q0.025 ), alpha=0.1, fill = "blue") +
+#     scale_y_log10() +
+#     coord_flip() 
+                
+```
+
+```{r}
+
+expression_median <- expression_data_long %>% filter(value > 0) %>%
+  group_by(gene) %>%
+  summarise(value.median = median(value))
+probs = seq(0,1, 0.25)
+quantiles <- quantile(expression_median$value.median, probs)
+
+
+#labelling 
+Qlabels = c()
+for (i in 2:length(quantiles) ) {
+  tmp = names(quantiles)
+  Qlabels = c(Qlabels, paste(tmp[i-1], tmp[i], sep = "-"))
+}
+Qlabels = str_remove_all(Qlabels, "[%]")
+
+expression_median <- expression_median %>% mutate(bin = cut(value.median, breaks=quantiles, labels = Qlabels, include.lowest=TRUE))
+
+expression_median %>%
+  ggplot(aes(x = value.median)) +
+    geom_histogram(bins = 100) +
+    geom_vline(xintercept = quantiles) +
+    scale_x_log10(breaks = c(0, 10, 100, 1000, 10000))
+
+```
+
+
+```{r}
+
+regions <- read_delim("/vault/DeepExpression/data/Saccharomyces_cerevisiae.R64-1-1.regions.csv", delim = ";")
+regions_long <- regions %>% select(gene_id, `3utr_len`, `5utr_len`, cds_len) %>% gather(key = region, value = length, -gene_id)
+
+total_genes <- regions_long %>% filter(region == "cds_len") %>% nrow() 
+
+
+
+#3UTR
+regions_long %>% filter(region == "3utr_len", length >300) %>% nrow() / total_genes
+p3_utr <- regions_long %>% filter(region == "3utr_len", length > 1, length < 5000) %>% 
+  ggplot(aes(x = length)) +
+    geom_histogram(fill = "black", colour = "white") +
+    geom_vline(xintercept = 300) +
+    xlab("Length of 3`UTR") +
+    scale_x_log10() + theme(aspect.ratio = 5/8)
+figure_path = paste(figure_dir, "p_3utr.pdf", sep = "/")
+ggsave(figure_path, p3_utr, width = 5)
+
+
+#5UTR
+regions_long %>% filter(region == "5utr_len", length >350) %>% nrow() / total_genes
+
+p5_utr <- regions_long %>% filter(region == "5utr_len", length > 1, length < 5000) %>% 
+  ggplot(aes(x = length)) +
+    geom_histogram(fill = "black", colour = "white") +
+    geom_vline(xintercept = 350) +
+    xlab("Length of 5`UTR") +
+    scale_x_log10() + theme(aspect.ratio = 5/8)
+figure_path = paste(figure_dir, "p_5utr.pdf", sep = "/")
+ggsave(figure_path, p5_utr, width = 5)
+
+
+
+#cds_len
+regions_long %>% filter(region == "cds_len", length >350) %>% nrow() / total_genes
+p_cds <- regions_long %>% filter(region == "cds_len", length > 1, length < 5000) %>% 
+  ggplot(aes(x = length)) +
+    geom_histogram(fill = "black", colour = "white") +
+    xlab("Length of CDS") +
+    scale_x_log10()  + theme(aspect.ratio = 5/8)
+
+figure_path = paste(figure_dir, "p_cds.pdf", sep = "/")
+ggsave(figure_path, p_cds, width = 5)
+
+
+
+```
+```{r pressure, echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("misc/r2table.png")
+```
+
+
+
+```{r upset, fig.width=10}
+
+# example of expression input
+expressionInput <- c(prom = 0.134, 
+                     `5utr` = 0.129, 
+                     `3utr` = 0.173, 
+                      term = 0.018,
+                     `prom&5utr` = 0.255, 
+                     `prom&3utr` = 0.235,
+                     `prom&term` = 0.169, 
+                     `5utr&3utr` = 0.244,
+                     `5utr&term` = 0.195, 
+                     `3utr&term` = 0.186, 
+                     `prom&5utr&3utr` = 0.331, 
+                     `prom&5utr&term` = 0.270, 
+                     `prom&3utr&term` = 0.292, 
+                     `5utr&3utr&term` = 0.286, 
+                     `prom&5utr&3utr&term` = 0.374 )
+
+toPlot_upset <- fromExpression(round(expressionInput/max(expressionInput) * 100))
+
+
+pdf("output_files/upset_rplot.pdf") 
+# 2. Create a plot
+upset(toPlot_upset, sets = rev(c("prom", "5utr", "3utr", "term")), keep.order = T, show.numbers = F)
+# Close the pdf file
+dev.off() 
+
+```
+
+
+```{r test_Data, fig.width=10}
+
+test_raw <- read_delim("/vault/DeepExpression/data/2019_3_27/test_data.csv", delim = ",")
+p_test <- test_raw %>%
+  ggplot(aes(x = pred, y = true)) +
+    geom_point() +
+    scale_y_log10() +
+    scale_x_log10() +
+    geom_smooth(method='lm', se = F) +
+    labs(#title =  bquote(italic(R)^2 == .(format(cor(test_raw$pred, test_raw$true)^2, digits = 3))),
+         title =  bquote(italic(R)^2 == .(format(0.756, digits = 3))),
+         subtitle = "",
+         caption = "",
+         #tag = "Figure 1",
+         y = "Experimentally measured (RNA-Seq) gene expression level, TMP count" ,
+         x = "Predicted gene expression level based on sequence data, TMP count"   ) +  
+    theme(aspect.ratio = 1) 
+
+
+figure_path = paste(figure_dir, "p_test.pdf", sep = "/")
+ggsave(figure_path, p_test)
+
+p_test
+```
+
+
+```{r test_features, fig.width=10}
+
+test_raw <- read_delim("/vault/DeepExpression/data/Codon_model1_test.csv", delim = ",")
+
+p_codons <-  test_raw %>% filter(y_pred >0, y_true > 0) %>% sample_n(1000) %>%
+  ggplot(aes(x = y_pred*2, y = y_true)) +
+    geom_point(alpha = 1) +
+    #scale_y_log10() +
+    #scale_x_log10() +
+    geom_smooth(method='lm', se = F) +
+    labs(title =  bquote(italic(R)^2 == .(format(cor(test_raw$y_pred, test_raw$y_true)^2, digits = 3))),
+         subtitle = "",
+         caption = "",
+         #tag = "Figure 1",
+         x = "Predicted codon distribution, probability of codon per gene" ,
+         y = "Actual codon distribution, probability of codon per gene"    ) +  
+    theme(aspect.ratio = 1) 
+
+
+figure_path = paste(figure_dir, "p_codons.pdf", sep = "/")
+ggsave(figure_path, p_codons)
+
+  
+```
+
+
+```{r, fig.width=15}
+
+rules <-  read_delim("/vault/DeepExpression/data/2019_3_27/rules_testdata_occlusion10z1_26_3_19_upset_all.csv", delim = ";")
+
+rules_total <- rules %>% select(-X1) %>% gather(value = n_rules, key = region,  -c(k:regions)) %>% 
+  group_by(k, minConfidence, minLift, minSupport, regions) %>%
+  summarise(n_rules_total = sum(n_rules, na.rm = T))
+
+rules_total %>%
+  ggplot(aes(x = regions, y = n_rules_total, fill = factor(k))) +
+    geom_bar(stat = "identity", position ="dodge") + 
+    coord_flip() +
+    facet_wrap(~minSupport, scales = "free")
+
+
+rules_total %>%
+  group_by(minConfidence, minLift, minSupport, regions) %>%
+  summarise(n_rules_total = sum(n_rules_total, na.rm = T)) %>%
+  ggplot(aes(x = regions, y = n_rules_total)) +
+    geom_bar(stat = "identity", position ="dodge") + 
+    coord_flip() +
+    facet_wrap(minSupport~minConfidence, scales = "free")
+
+oclussions_raw <-  read_delim("/vault/DeepExpression/data/2019_3_27/predictions_rsd1_regions_merged_w10_18_3_19_rr_occlusions.csv", delim = ",")
+
+oclussions_raw %>% mutate(gene = row_number()) %>%
+  gather(key = position, value = score,  -gene) -> oclussions_long
+oclussions_long %>% mutate(position = as.numeric(position)) -> oclussions_long
+
+oclussions_long %>% filter(!between(position, 990,999), !between(position, 1290,1299), !between(position, 1640,1649))
+
+rollz<-function(x,w) {
+  avg=rollapply(x, width = w, na.pad = T, align = "right",  FUN = mean,  na.rm = T)
+  std=rollapply(x, width = w, na.pad = T, align = "right", FUN = sd, na.rm = T)
+  z=(x-avg)/std
+  return(z)
+}
+max(unique(oclussions_long$position))
+#1000,300,350,500 - 10 for window sieze
+oclussions_long %>% ungroup() %>% mutate(region = ifelse(between(position, 0, 989), "promoter", 
+                                        ifelse(between(position, 1000 , 1289), "5UTR", 
+                                         ifelse(between(position, 1300, 1639), "3UTR", 
+                                                ifelse(between(position, 1650, 2139), "terminator", NA))))) -> oclussions_long
+
+oclussions_long %>% group_by(gene, region) %>% arrange(gene, position) %>% 
+  mutate(#Z_score_roling = rollz(score, 20),
+        Z_score = (score - mean(score, na.rm = T))/sd(score, na.rm = T)) -> oclussions_long
+
+p_ocl <- oclussions_long %>% ungroup %>% filter(region != "NA") %>% 
+  mutate(region = fct_relevel(factor(region), "promoter", "5UTR", "3UTR", "terminator")) %>%
+  ggplot(aes(x = position, y = Z_score, colour = factor(gene)))+
+    geom_line(alpha = 0.1) + 
+    facet_grid(~region, scales = "free") +
+    ylim(-10,10) +
+    theme(legend.position = "none", aspect.ratio = 5/8) 
+
+figure_path = paste(figure_dir, "p_ocl.pdf", sep = "/")
+ggsave(figure_path, p_ocl, width = 15)
+
+```
+
+```{r, fig.width=10}
+data_path = "./Evolutionary_rate_Fungi"
+
+files =  dir(data_path, pattern = "^substitution_rates.*.txt$", recursive = T, full.names = TRUE, ignore.case = TRUE)
+
+
+data <- data_frame(filename = files) %>%
+                    mutate(file_contents = map(filename, ~read_tsv(., skip = 1, 
+                                                  col_names = c("Gene", 	"Mean_alpha", "Variance", "Lower",  "Upper",  "Median",   "minESS",  "avgESS", "PSRF") ))) %>%
+      mutate(filename = basename(filename))
+  
+data <- data %>% unnest() 
+
+
+data_nested <- data %>% gather(variable, value, -Gene,-filename) %>% spread(filename, value) %>%  left_join(expression_median %>% select(gene, bin), by = c("Gene" = "gene")) %>%
+  group_by(variable, bin) %>% 
+  nest() %>%
+  mutate(matrix = map(data, . %>% na.omit %>% tidy_pca %>% cor(.,method = "spearman")))
+  
+cor
+library(GGally)
+data_nested %>% filter(variable == "Median")
+data_nested$matrix
+
+ggpairs(data_nested$data[[4]][,-1])
+ggpairs(data_nested$data[[5]][,-1])
+ggpairs(data_nested$data[[9]][,-1])
+
+library(devtools)
+source_gist("524eade46135f6348140", filename = "ggplot_smooth_func.R")
+
+data_nested %>% unnest(data) %>%  filter(variable == "Median", bin!="NA") %>% 
+  rename(x = substitution_rates.coding.txt, y =  substitution_rates.prom_full.txt) %>% 
+  select(bin, x, y ) -> toPlot
+
+toPlot.stats <- paste0("r = ", round(cor.test(toPlot$x, toPlot$y)$estimate,2), "; ", "p-value = ", format((cor.test(toPlot$x, toPlot$y))$p.value, digits = 3, scientific = T))
+
+p1 <- toPlot %>%  
+  ggplot(aes(x = x, y =  y)) +
+  geom_point(alpha = 0.2) +
+  #stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
+  stat_smooth(method = "lm", se = F) + 
+  labs(x = "Substitution rates in CDS",
+       y = "Substitution rates in promoter",
+       title = toPlot.stats) +
+  scale_x_log10() + 
+  scale_y_log10() 
+
+data_nested %>% unnest(data) %>%  filter(variable == "Median", bin!="NA") %>% 
+  rename(x = substitution_rates.coding.txt, y =  substitution_rates.term_full.txt) %>% 
+  select(bin, x, y ) -> toPlot
+
+toPlot.stats <- paste0("r = ", round(cor.test(toPlot$x, toPlot$y)$estimate,2), "; ", "p-value = ", format((cor.test(toPlot$x, toPlot$y))$p.value, digits = 3, scientific = T))
+
+p2 <- toPlot %>%  
+  ggplot(aes(x = x, y =  y)) +
+  geom_point(alpha = 0.2) +
+  #stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
+  stat_smooth(method = "lm", se = F) + 
+  labs(x = "Substitution rates in CDS",
+       y = "Substitution rates in terminator",
+       title = toPlot.stats) +
+  scale_x_log10() + 
+  scale_y_log10() 
+
+
+
+
+data_nested %>% unnest(data) %>%  filter(variable == "Median", bin!="NA") %>% 
+  rename(x = substitution_rates.prom_full.txt, y =  substitution_rates.term_full.txt) %>% 
+  select(bin, x, y ) -> toPlot
+
+toPlot.stats <- paste0("r = ", round(cor.test(toPlot$x, toPlot$y)$estimate,2), "; ", "p-value = ", format((cor.test(toPlot$x, toPlot$y))$p.value, digits = 3, scientific = T))
+
+p3 <- toPlot %>%  
+  ggplot(aes(x = x, y =  y)) +
+  geom_point(alpha = 0.2) +
+  #stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
+  stat_smooth(method = "lm", se = F) + 
+  labs(x = "Substitution rates in promoter",
+       y = "Substitution rates in terminator",
+       title = toPlot.stats) +
+  scale_x_log10() + 
+  scale_y_log10() 
+
+
+library(gridExtra)
+p_all <- grid.arrange(p1 + theme(aspect.ratio = 5/8), p2 + theme(aspect.ratio = 5/8), p3 + theme(aspect.ratio = 5/8), ncol = 3)
+
+figure_path = paste(figure_dir, "p_all.pdf", sep = "/")
+ggsave(figure_path, p_all, width = 15)
+
+```
+
+```{r}
+
+df_upset <-  read_delim("/vault/DeepExpression/data/df_upset_k8_supp01_conf09_lift4.csv", delim = ",")
+
+
+expressionInput <- c(prom = 0.134, 
+                     `5utr` = 0.129, 
+                     `3utr` = 0.173, 
+                      term = 0.018,
+                     `prom&5utr` = 0.255, 
+                     `prom&3utr` = 0.235,
+                     `prom&term` = 0.169, 
+                     `5utr&3utr` = 0.244,
+                     `5utr&term` = 0.195, 
+                     `3utr&term` = 0.186, 
+                     `prom&5utr&3utr` = 0.331, 
+                     `prom&5utr&term` = 0.270, 
+                     `prom&3utr&term` = 0.292, 
+                     `5utr&3utr&term` = 0.286, 
+                     `prom&5utr&3utr&term` = 0.374 )
+
+df_upset_plot <- df_upset %>% gather(variable, counts, -regions) %>% group_by(regions) %>% summarise(total = sum(counts, na.rm = T)) %>%
+                                    mutate(names = str_replace_all(regions, "', '", replacement = "&"),
+                                          names = str_replace_all(names, "[(',)]+", replacement = "")) 
+exprInput = df_upset_plot$total
+names(exprInput) = df_upset_plot$names
+
+toPlot_upset <- round(exprInput/max(exprInput) * 100)
+
+toPlot_upset[toPlot_upset == 0] = 1
+figure_path = paste(figure_dir, "upset_regions.pdf", sep = "/")
+pdf(figure_path, width = 7) 
+# 2. Create a plot
+upset(fromExpression(toPlot_upset), sets = rev(c("promoter", "5UTR", "3UTR", "terminator")), keep.order =T, show.numbers = "yes" )
+# Close the pdf file
+dev.off() 
+ 
+```
+
+```{r}
+expression_data_raw %>% tidy_pca() %>% prcomp(scale = T, center = T) -> pca_expression
+
+var_vec <- pca_expression$sdev^2/sum(pca_expression$sdev^2)
+
+pca_expression$x %>% as.data.frame() %>%
+  ggplot(aes(x = PC1, PC2)) +
+    geom_point(alpha = 0.2)
+
+```

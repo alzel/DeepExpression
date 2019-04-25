@@ -1,0 +1,112 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "explore_sequences"
+save_data_dir = "output_files"
+dir.create(save_data_dir, showWarnings = FALSE)
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+
+save_object <- function(object, save_data_dir) {
+  object_name = deparse(substitute(object))
+  file_name = paste(object_name, fun_name, "RData", sep = ".")
+  file_path = paste(save_data_dir, file_name, sep="/")
+  save(list = eval(object_name), file = file_path)
+}
+
+
+```
+
+```{r libraries}
+library(tidyverse)
+#library(Biostrings)
+library(purrr)
+library(fs)
+library(readr)
+
+
+
+```
+
+```{r load_data}
+load("../2018-08-23/output_files/seq_data.explore_sequences.RData")
+load("../2018-08-23/output_files/seq_data_binned.explore_sequences.RData")
+```
+
+
+```{r}
+
+seq_data_binned <- seq_data_binned %>% 
+  dplyr::rename(dna = sequence) %>%
+  mutate(numeric_seq = str_replace_all(dna, c("A" = "0", "C" = "1", "G" = "2", "T" = "3")))
+
+seq_data_binned_nested <- seq_data_binned %>% filter(nchar(dna) >5) %>% group_by(element, bin) %>% nest()
+
+
+one_hot <- function (data) {
+   lapply(data$numeric_seq, function(s) {
+    keras::to_categorical(as.numeric(unlist(str_split(s, pattern = ""))), num_classes = 4)
+  })
+}
+
+binned_one_hots <- seq_data_binned_nested %>% 
+  mutate(one_hot = map(data, one_hot))
+
+```
+```{r save_for_python}
+library(RcppCNPy)
+
+mat = keras::pad_sequences(binned_one_hots$one_hot[[5]])
+dim(mat) <- NULL
+
+binned_one_hots <- binned_one_hots %>% 
+  mutate(paded_one_hot = map(one_hot, keras::pad_sequences))
+
+npySave("test.npy", mat)
+
+
+binned_one_hots_p <- binned_one_hots %>% 
+  mutate(paded_one_hot = map(one_hot, keras::pad_sequences))
+
+
+dim(mat) <- c(1140, 50,4)
+
+splited <- binned_one_hots_p %>% unite("element_bin",  c("element", "bin")) %>% split(.$element_bin)
+  
+lapply(splited, function(x) {
+  mat = x$paded_one_hot[[1]]
+  npySave(filename = paste(paste(x$element_bin[1], paste(dim(mat), collapse = "X"), sep = "_"), ".npy", sep = ""), 
+          mat)
+})
+
+```
+
+
+```{r}
+seq_data_binned %>% filter(nchar(sequence) >5) %>% unite("element_bin",  c("element", "bin")) %>%
+  split(.$element_bin) %>%
+  map(., . %>% dplyr::select(element_bin, sequence) %>% write_csv(path = paste(save_data_dir, paste(.$element_bin[1], ".tsv", sep = ""), sep = "/")))
+
+```

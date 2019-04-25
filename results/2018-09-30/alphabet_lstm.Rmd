@@ -1,0 +1,170 @@
+---
+title: "Learning alphabet with LSTM"
+output: html_notebook
+---
+
+
+```{r setup}
+set.seed(1014)
+options(digits = 3)
+
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  cache = TRUE,
+  out.width = "70%",
+  fig.align = 'center',
+  fig.width = 6,
+  fig.asp = 0.618,  # 1 / phi
+  fig.show = "hold",
+  dev = c("pdf", "png")
+)
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+
+fun_name = "alphabet"
+
+options(dplyr.print_min = 6, dplyr.print_max = 6)
+
+
+```
+
+
+based on:
+https://machinelearningmastery.com/understanding-stateful-lstm-recurrent-neural-networks-python-keras/
+
+
+
+```{python}
+# Naive LSTM to learn one-char to one-char mapping
+import numpy
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.utils import np_utils
+# fix random seed for reproducibility
+numpy.random.seed(7)
+# define the raw dataset
+alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# create mapping of characters to integers (0-25) and the reverse
+char_to_int = dict((c, i) for i, c in enumerate(alphabet))
+int_to_char = dict((i, c) for i, c in enumerate(alphabet))
+# prepare the dataset of input to output pairs encoded as integers
+seq_length = 1
+dataX = []
+dataY = []
+for i in range(0, len(alphabet) - seq_length, 1):
+	seq_in = alphabet[i:i + seq_length]
+	seq_out = alphabet[i + seq_length]
+	dataX.append([char_to_int[char] for char in seq_in])
+	dataY.append(char_to_int[seq_out])
+	print(seq_in, '->', seq_out)
+# reshape X to be [samples, time steps, features]
+X = numpy.reshape(dataX, (len(dataX), seq_length, 1))
+print(dataX)
+print(X.shape)
+# normalize
+X = X / float(len(alphabet))
+# one hot encode the output variable
+y = np_utils.to_categorical(dataY)
+# create and fit the model
+model = Sequential()
+model.add(LSTM(32, input_shape=(X.shape[1], X.shape[2])))
+model.add(Dense(y.shape[1], activation='softmax'))
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+model.fit(X, y, epochs=500, batch_size=1, verbose=2)
+# summarize performance of the model
+scores = model.evaluate(X, y, verbose=0)
+print("Model Accuracy: %.2f%%" % (scores[1]*100))
+# demonstrate some model predictions
+#for pattern in dataX:
+#	x = numpy.reshape(pattern, (1, len(pattern), 1))
+#	x = x / float(len(alphabet))
+#	prediction = model.predict(x, verbose=0)
+#	index = numpy.argmax(prediction)
+#	result = int_to_char[index]
+#	seq_in = [int_to_char[value] for value in pattern]
+#	print(seq_in, "->", result)
+
+#We can see that this problem is indeed difficult for the network to learn.
+#The reason is, the poor LSTM units do not have any context to work with. Each input-output pattern is shown to the network in a random order and the state of the network is reset after each pattern (each batch #where each batch contains one pattern).
+#This is abuse of the LSTM network architecture, treating it like a standard multilayer Perceptron.
+#Next, let’s try a different framing of the problem in order to provide more sequence to the network from which to learn.
+```
+
+
+
+
+
+```{r}
+
+library(keras)
+
+mnist <- dataset_mnist()
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+
+print(str(x_train))
+x_train <- array_reshape(x_train, c(nrow(x_train), 784))
+print(str(x_train))
+
+alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# create mapping of characters to integers (0-25) and the reverse
+#char_to_int = dict((c, i) for i, c in enumerate(alphabet))
+#int_to_char = dict((i, c) for i, c in enumerate(alphabet))
+# prepare the dataset of input to output pairs encoded as integers
+
+
+seq_length = 5
+dataX = list()
+dataY = list()
+
+for (i in seq(1, length(letters) - seq_length, 1)){
+  seq_in = LETTERS[i:(i + seq_length-1)]
+  seq_out = LETTERS[i + seq_length]
+  dataX <- lappend(dataX, match(seq_in, LETTERS))
+  dataY <- lappend(dataY, match(seq_out, LETTERS))
+  print(paste(paste0(seq_in, collapse = ","), '->', seq_out))
+}
+
+
+X = array(unlist(X), dim = c(length(X), seq_length, 1))
+X = X/length(LETTERS)
+Y = to_categorical(dataY)
+
+model <- keras_model_sequential() 
+
+
+model %>% 
+  layer_lstm(units = 32, input_shape = c(seq_length,1)) %>%
+  layer_dense(dim(Y)[2], activation = "softmax")
+
+model %>% 
+  compile(
+    loss = 'categorical_crossentropy',
+    optimizer = "adam",
+    metrics = c('accuracy')
+  )
+
+
+# model = Sequential()
+# model.add(LSTM(32, input_shape=(X.shape[1], X.shape[2])))
+# model.add(Dense(y.shape[1], activation='softmax'))
+# model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+# model.fit(X, y, epochs=500, batch_size=1, verbose=2)
+
+history <- model %>% fit(
+  X, Y,
+  epochs = 500, batch_size = 1, verbose = 2
+)
+
+
+
+
+```
