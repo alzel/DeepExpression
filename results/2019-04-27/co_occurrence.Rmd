@@ -8,7 +8,7 @@ output:
 
 ```{r libraries}
 library(tidyverse)
-library(UpSetR)
+#library(UpSetR)
 library(ComplexHeatmap)
 library(zoo) 
 library(ggthemes)
@@ -101,7 +101,7 @@ motifs_gene %>% group_by(identity, cl_size, genes_list) %>% summarise(n=n()) %>%
       
 #per
 motifs_gene %>% 
-  group_by(identity, cl_size, region, genes_list) %>% summarise(n=n()) %>% arrange(genes_list)
+  group_by(identity, cl_size, region, genes_list) %>% summarise(n=n()) %>% arrange(genes_list) %>%
   ggplot(aes(x = n, fill = region)) +
    geom_histogram() +
    facet_wrap(identity~cl_size) +
@@ -155,8 +155,18 @@ dat2 <- melt(dat)
 
 w = table(dat[1:2])
 V <- crossprod(w)
+V[upper.tri(V)] = NA
+V_long <- melt(V) %>% na.omit
+names(V_long) <- c("X1", "X2", "value")
 
-melt(V[upper.tri(V)])
+antiV_long<- crossprod(!w) %>% melt
+names(antiV_long) <- c("X1", "X2", "value")
+
+left_join(left_join(V_long %>% filter(X1 != X2) %>% rename(both = value), # A & B  
+                    V_long %>% filter(X1 == X2) %>% rename(all_X1 = value), by = c("X1"="X1")), #all A'S
+          V_long %>% filter(X1 == X2) %>% rename(all_X2 = value), by = c("X2.x"="X2")) -> item_counts
+          
+item_counts %>% select(X1.x, X2.x, both, all_X1, all_X2) %>% left_join(antiV_long %>% rename(none=value), by = c("X1.x"="X1", "X2.x"="X2"))
 
 fisher.test(matrix(c(V["C","B"], V["B","B"] - V["C","B"], V["C","C"] - V["C","B"],  crossprod(!w)["C", "B"]), ncol = 2))
 
