@@ -98,7 +98,7 @@ white_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = elem
                     axis.title.x = element_text(colour = "black", size=20),
                     axis.title.y = element_text(colour = "black", size=20),
                     axis.line.x = element_line(colour = "black"))
-p_joy_division + joy_division_theme + theme(aspect.ratio = 3/4)
+
 
 selected <- sample(colnames(expression_data_raw), 500)
 expression_data_long %>% filter(value > 1, gene %in% selected) -> toPlot
@@ -404,7 +404,82 @@ p_ocl <- oclussions_long %>% ungroup %>% filter(region != "NA") %>%
 figure_path = paste(figure_dir, "p_ocl.pdf", sep = "/")
 ggsave(figure_path, p_ocl, width = 15)
 
+
+oclussions_long %>% ungroup %>% filter(region != "NA") %>% 
+  mutate(region = fct_relevel(factor(region), "promoter", "5UTR", "3UTR", "terminator")) %>%
+  filter(region == "promoter", gene == 1 ) %>%
+  ggplot(aes(x = position - 1000, y = Z_score*1.5)) +
+    geom_line(alpha = 1) + 
+    geom_hline(yintercept = c(-2, 2), linetype = 2) +
+    #facet_grid(~region, scales = "free") +
+    ylab("Z - score of relevance") +
+    xlab("Position in the promoter") +
+    ylim(-10,10) +
+    theme(legend.position = "none", aspect.ratio = 3/8) +
+    theme(axis.text.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 12, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
+        axis.title.x = element_text(color = "grey20", size = 28, angle = 0, hjust = .5, vjust = 0, face = "plain"),
+        axis.title.y = element_text(color = "grey20", size = 28, angle = 90, hjust = .5, vjust = .5, face = "plain"))
+
+
+
+
 ```
+
+
+#oclusion analysis - clustering of regions
+```{r, fig.width=12}
+library(ComplexHeatmap)
+library("NbClust")
+
+oclussions_long %>% ungroup() %>%
+  select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>%
+  tidy_pca -> matrix_regions
+  
+
+
+library(ConsensusClusterPlus)
+
+
+results = ConsensusClusterPlus(t(matrix_regions), maxK=10,reps=50,pItem=0.8,pFeature=1,
+                               clusterAlg="pam",distance="pearson", seed=123, plot = "png")
+
+Heatmap(matrix_regions, cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
+        show_column_names = F, clustering_distance_rows = "pearson",
+        split = results[[6]]$consensusClass, gap = unit(3, "mm"), raster_quality = 10)
+
+
+oclusions_nested <- oclussions_long %>% ungroup %>% group_by(region) %>% na.omit() %>% nest() %>%
+  mutate(matrix = map(data,  . %>% select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>% tidy_pca ))
+
+oclusions_nested <- oclusions_nested %>% 
+  mutate(clustering = map(matrix, . %>% t() %>%
+                           ConsensusClusterPlus(maxK=10,reps=50,pItem=0.8,pFeature=1, clusterAlg="pam",distance="pearson", seed=123, plot = "png")) )
+
+oclusions_nested <- oclusions_nested %>% mutate(consensusClass = map(clustering, function(x) { x[[6]]$consensusClass} ))
+
+oclusions_nested %>% filter(region == "5UTR") -> toPlot
+Heatmap(toPlot$matrix[[1]][], cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
+        show_column_names = F, clustering_distance_rows = "pearson",
+        split = toPlot$consensusClass[[1]], gap = unit(3, "mm"), raster_quality = 10 )
+
+toPlot$matrix[[1]][,] %>% as_tibble(rownames = "gene" ) %>% left_join(as_tibble(toPlot$consensusClass[[1]], rownames = "gene" )) %>%
+  select(value, everything()) %>% rename(cluster = value)  %>% group_by(cluster) %>% tidyr::nest() %>% 
+  mutate(sumaries = map(data, . %>% tidy_pca %>% psych::describe(quant=c(0.05, .25,.75, 0.95)))) -> summaries
+
+summaries %>% tidyr::unnest(sumaries) %>% 
+  ggplot(aes(y = median, x = vars)) +
+    geom_ribbon(aes(x = vars,
+                    ymax = Q0.95, fill = factor(cluster), 
+                    ymin = Q0.05), alpha=0.1) +
+    geom_ribbon(aes(x = vars,  
+                    ymax = Q0.25, fill = factor(cluster),
+                    ymin = Q0.75), alpha=0.1) +
+    geom_line(aes(colour = factor(cluster)), size = 1 ) +
+    #facet_grid( ".~cluster" , scales = "free") +
+    theme(aspect.ratio = 5/8)
+```
+
 
 ```{r, fig.width=10}
 data_path = "./Evolutionary_rate_Fungi"
