@@ -63,8 +63,6 @@ tidy_pca = function(x) {
 ```{r}
 
 motif_path = "../../data/2019-04-25/2019_2_18/"
-
-
 motifs_raw <- tibble( filename = path(motif_path) %>%  dir_ls(regexp = ".*?\\/motifs.*?_frame.csv")) %>%
   mutate(file_contents = map(filename, read_csv))
 
@@ -74,7 +72,7 @@ motifs_raw <- motifs_raw %>% mutate(filename = basename(filename)) %>% unnest(fi
 
 
 
-#motif_raw = read_delim("../../data/2019-04-25/2019_2_18/motifs1_09_8_frame.csv", delim = ",")
+rules_raw = read_delim("../../data/2019-04-25/2019_2_18/r", delim = ",")
 
 
 ```
@@ -106,6 +104,16 @@ motifs_gene %>%
    geom_histogram() +
    facet_wrap(identity~cl_size) +
    labs(x = "n of PWMs per gene")
+
+
+motifs_gene %>% 
+  group_by(identity, cl_size, region, cluster) %>% summarise(n=n()) %>% arrange(cluster) %>%
+  ggplot(aes(x = n, fill = region)) +
+   geom_histogram() +
+   facet_wrap(identity~cl_size) +
+   labs(x = "PWM across genes")
+
+
 
 ```
 
@@ -148,16 +156,17 @@ Trx5 B 3
 Trx5 C 2
 Trx5 D 1", header=T)
 
-dat
 #making the boolean matrix   
 library(reshape2)
 dat2 <- melt(dat)
 
 w = table(dat[1:2])
+
 V <- crossprod(w)
 V[upper.tri(V)] = NA
 V_long <- melt(V) %>% na.omit
 names(V_long) <- c("X1", "X2", "value")
+
 
 antiV_long<- crossprod(!w) %>% melt
 names(antiV_long) <- c("X1", "X2", "value")
@@ -170,9 +179,46 @@ item_counts %>% select(X1.x, X2.x, both, all_X1, all_X2) %>% left_join(antiV_lon
 
 fisher.test(matrix(c(V["C","B"], V["B","B"] - V["C","B"], V["C","C"] - V["C","B"],  crossprod(!w)["C", "B"]), ncol = 2))
 
-t(w) %*% w
+```
 
 
-V
-w <- dcast(dat2, Items~TrxID)
+# motifs Fisher test
+
+```{r}
+
+w = motifs_gene %>% filter(identity == "09", cl_size == "4") %>% select(genes_list, cluster) %>% table
+  
+V = crossprod(w)
+V[upper.tri(V)] = NA
+V_long <- melt(V) %>% na.omit
+
+V_long <- melt(V) %>% na.omit
+names(V_long) <- c("X1", "X2", "value")
+
+antiV_long<- crossprod(!w) %>% melt
+
+names(antiV_long) <- c("X1", "X2", "value")
+
+
+left_join(left_join(V_long %>% filter(X1 != X2) %>% rename(both = value), # A & B  
+                    V_long %>% filter(X1 == X2) %>% rename(all_X1 = value), by = c("X1"="X1")), #all A'S
+          V_long %>% filter(X1 == X2) %>% rename(all_X2 = value), by = c("X2.x"="X2")) -> item_counts
+          
+item_counts %>% select(X1.x, X2.x, both, all_X1, all_X2) %>% left_join(antiV_long %>% rename(none=value), by = c("X1.x"="X1", "X2.x"="X2")) -> item_counts
+
+
+stats <- item_counts %>% filter(both >= 0) %>% arrange(-both) %>%
+  group_by(X1.x, X2.x) %>%
+  mutate(matrix_fisher = list(matrix(c(both, all_X1, all_X2, none), ncol = 2))) %>%
+  mutate(fisher = map(matrix_fisher, fisher.test)) 
+
+
+stats %>% mutate(pval = map(fisher, function(x) {x$p.value})) %>% unnest(pval) %>% ungroup %>% mutate(padj = p.adjust(pval, method = "BH")) %>% filter(padj < 0.05)
+
+```
+
+
+```{r }
+read_
+
 ```
