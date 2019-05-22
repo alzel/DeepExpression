@@ -188,11 +188,19 @@ fisher.test(matrix(c(V["C","B"], V["B","B"] - V["C","B"], V["C","C"] - V["C","B"
 
 w = motifs_gene %>% filter(identity == "09", cl_size == "4") %>% select(genes_list, cluster) %>% table
   
+# tmp <- motifs_gene %>% 
+#   group_by(identity, cl_size) %>% 
+#   select(genes_list, cluster) %>% nest %>% 
+#   mutate(table_data = map(data, table),
+#          V = map(table_data, crossprod),
+#          V = map(V, function(x) { x[upper.tri(x)] = NA}),
+#          V_long  = map(V, function(x) { melt(x) %>% na.omit })) %>%
+#   mutate(V_long = map(V_long, function(x) { print(colnames(x))}))
+         
 V = crossprod(w)
 V[upper.tri(V)] = NA
 V_long <- melt(V) %>% na.omit
 
-V_long <- melt(V) %>% na.omit
 names(V_long) <- c("X1", "X2", "value")
 
 antiV_long<- crossprod(!w) %>% melt
@@ -207,7 +215,7 @@ left_join(left_join(V_long %>% filter(X1 != X2) %>% rename(both = value), # A & 
 item_counts %>% select(X1.x, X2.x, both, all_X1, all_X2) %>% left_join(antiV_long %>% rename(none=value), by = c("X1.x"="X1", "X2.x"="X2")) -> item_counts
 
 
-stats <- item_counts %>% filter(both >= 0) %>% arrange(-both) %>%
+stats <- item_counts %>% filter(both >= 3) %>% arrange(-both) %>%
   group_by(X1.x, X2.x) %>%
   mutate(matrix_fisher = list(matrix(c(both, all_X1, all_X2, none), ncol = 2))) %>%
   mutate(fisher = map(matrix_fisher, fisher.test)) 
