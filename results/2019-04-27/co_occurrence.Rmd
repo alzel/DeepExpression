@@ -7,12 +7,17 @@ output:
 
 
 ```{r libraries}
+library(PWMEnrich)
 library(tidyverse)
 #library(UpSetR)
 library(ComplexHeatmap)
 library(zoo) 
 library(ggthemes)
 library(fs)
+library(ggseqlogo)
+library(reticulate)
+use_python("/usr/local/bin/python")
+
 ```
 
 
@@ -37,7 +42,7 @@ lappend <- function(lst, obj) {
   return(lst)
 }
 
-fun_name = "plot_results"
+fun_name = "co_occurrence"
 save_data_dir = "output_files"
 dir.create(save_data_dir, showWarnings = FALSE)
 options(dplyr.print_min = 6, dplyr.print_max = 6)
@@ -61,27 +66,73 @@ tidy_pca = function(x) {
 ```
 
 ```{r}
-
+#motifs summary
 motif_path = "../../data/2019-04-25/2019_2_18/"
-motifs_raw <- tibble( filename = path(motif_path) %>%  dir_ls(regexp = ".*?\\/motifs.*?_frame.csv")) %>%
+motifs_raw <- tibble( filename = path(motif_path) %>%  dir_ls(regexp = "motifs1_09_8_frame_s3.csv")) %>%
+#motifs_raw <- tibble( filename = path(motif_path) %>%  dir_ls(regexp = ".*?\\/motifs.*?_frame_s3.csv")) %>%
   mutate(file_contents = map(filename, read_csv))
-
-
-
+ 
 motifs_raw <- motifs_raw %>% mutate(filename = basename(filename)) %>% unnest(file_contents)
 
+#rules_raw = read_delim("../../data/2019-04-25/2019_2_18/", delim = ",")
+
+#motifs comparison
+tomtom_yeastract_path = "../../data/2019-04-25/2019_2_18/tomtom_yeastract_pwms_o10_z2_09_8_7_ungapped/tomtom.tsv"
+tomtom_yeastract <- read_delim(tomtom_yeastract_path, delim = "\t", col_names = T, comment ="#")
+
+#motifs comparison
+tomtom_jaspar_path = "../../data/2019-04-25/2019_2_18/tomtom_jaspar-fungi_pwms_o10_z2_09_8_7_ungapped/tomtom.tsv"
+tomtom_jaspar <- read_delim(tomtom_jaspar_path, delim = "\t", col_names = T, comment ="#")
 
 
-rules_raw = read_delim("../../data/2019-04-25/2019_2_18/r", delim = ",")
+tomtom_pairfwise_path = "../../data/2019-04-25/2019_2_18/tomtom1_old/tomtom_pairwise/tomtom.tsv"
+tomtom_pairwise <- read_delim(tomtom_pairfwise_path, delim = "\t", col_names = T, comment ="#")
+
+
 
 
 ```
 
 
-Analysis motifs per gene
+# Applying pornography to get gene names
+```{python}
+import numpy as np
+
+def load_gene_names(fname):
+    npzfile = np.load(fname)
+    names_train = npzfile['arr_6']
+    names_test = npzfile['arr_7']
+    
+    Y_train = npzfile['arr_4']
+    Y_test = npzfile['arr_5']
+    
+    Y_train = Y_train.astype(np.float32).reshape((-1, 1))
+    Y_test = Y_test.astype(np.float32).reshape((-1, 1))
+    
+    return (np.concatenate((names_train,names_test)), np.concatenate((Y_train,Y_test)))
+
+gene_names, gene_values = load_gene_names("../../data/2019-05-29/2019_3_10/data/scerevisiae.rsd1.npz")
+
+
+
+
+```
+
+```{r}
+
+gene2name = tibble(idx = 1:length(py$gene_names),
+                  ORF = py$gene_names,
+                  value = py$gene_values)
+
+
+```
+
+
+
+# Analysis motifs per gene
 ```{r}
 motifs_raw %>% 
-  mutate(filename = str_replace_all(filename, "_frame.csv", ""),
+  mutate(filename = str_replace_all(filename, "_frame_s3.csv", ""),
          filename = str_replace_all(filename, "motifs1_", "")) %>%
   mutate(genes = str_replace_all(string = genes, pattern = "[\\[\\]\\n]+", replacement = "")) %>%
   mutate(genes_list = str_split(string = genes, pattern = "[:space:]")) -> motifs_raw
@@ -113,14 +164,214 @@ motifs_gene %>%
    facet_wrap(identity~cl_size) +
    labs(x = "PWM across genes")
 
+motifs_gene %>% filter(cl_size == 8) %>%
+  group_by(identity, cl_size, region) %>% distinct(cluster) %>% summarise(n=n()) %>%
+  ggplot(aes(x = region, y = n)) +
+    geom_histogram(stat = "identity") + coord_flip()
 
 
 ```
+
+
+Tomtom outputs a tab-separated values (TSV) file ('tomtom.tsv') that contains one line for each motif found to be significantly enriched. The lines are grouped by query motif and sorted in order of decreasing statistical significance. The first line contains the (tab-separated) names of the fields. Your command line is given at the end of the file in a comment line starting with the character '#'.
+
+The names and meanings of each of the fields in Tomtom Results TSV Format are described below.
+
+field	name	contents
+1	Query_ID	The name of the query motif, which is unique in the motif database file.
+2	Target_ID	The name of the target motif, which is unique in the motif database file.
+3	Optimal_offset	The offset of the query motif relative to the target motif in the optimal alignment.
+A positive value indicates the query is shifted right.
+4	p-value	The probability that a random motif of the same width as the target would have an optimal alignment with a match score as good or better than the target's.
+Tomtom estimates the p-value using a null model consisting of sampling motif columns from all the columns in the set of target motifs.
+5	E-value	The expected number of false positives in the matches up to this point.
+Tomtom estimates the E-value by multiplying the p-value by the total number of target motifs in all the target databases.
+6	q-value	The minimum False Discovery Rate (FDR) required to consider this match significant.
+Tomtom estimates q-values from all the match p-values using the method proposed by Benjamini & Hochberg (Journal of the Royal Statistical Society B, 57:289-300, 1995). See also Storey JD, Tibshirani R. Statistical significance for genome-wide studies, Proc. Natl. Acad. Sci. USA (2003) 100:9440–9445.
+7	Overlap	The number of motif columns that overlap in the optimal alignment.
+8	Query_consensus	A consensus sequence computed from the letter frequencies in the query motif (as described below).
+9	Target_consensus	A consensus sequence computed from the letter frequencies in the target motif (as described below).
+10	Orientation	The orientation of the target motif that gave the optimal alignment. 
+A value of '+' means that the target motif is as it appears in the database. A value of '-' means that the reverse complement of the target motif is shown.
+
+```{r}
+qval_thr = 0.01
+eval_thr = 0.01
+tomtom_pairwise %>% 
+  separate(Query_ID, into = "Query_region", remove = F, sep="_") %>% separate(Target_ID, into = "Target_region", remove = F, sep="_") %>%
+  mutate(comparison = ifelse(Query_region == Target_region, "within", "between")) %>%
+  group_by(Query_region,Target_region, comparison) %>%
+  filter(`q-value` < qval_thr,`E-value` < eval_thr, Query_ID != Target_ID, Orientation == "+") %>% summarise(n = n())
+
+qval_thr = 0.05
+eval_thr = 1
+
+tomtom_jaspar %>% mutate(type = ifelse(`q-value` < qval_thr & `E-value` < eval_thr, "inJASPAR", "new")) %>% 
+  group_by(Query_ID) %>% filter(`E-value` == min(`E-value`)) %>% filter(row_number() == 1) %>% 
+  separate(Query_ID, into = "Query_region", remove = F, sep="_") -> filtered_jaspar
+
+filtered_jaspar %>% 
+  select(Query_ID, Query_region, type) %>%
+  group_by(Query_region, type) %>% summarise(n = n()) %>%
+  ggplot(aes(x = Query_region, fill = type, y = n )) +
+    geom_bar( stat="identity") +
+    scale_x_discrete(breaks=rev(c(0,1,2,3)),
+                     labels=rev(c("Promoter", "5UTR", "3UTR", "Terminator"))) +
+    labs(title =  "",
+         subtitle = "",
+         caption = "",
+         #tag = "Figure 1",
+         x = "" ,
+         y = "Number of identified motifs")
+
+
+```
+#Relevance analysis
+
+```{r, fig.width=15}
+#oclussions_raw <- read_delim("../../data/2019-04-25/2019_2_18/relevance_predictions_wholeset_rsd1_regions_merged_w10_19_3_19.csv", delim = ",", col_names = F)
+
+oclussions_raw <- read_delim("../../data/2019-04-25/2019_6_3/relevance_rsd1_lmbda022_w10.reg_cf", delim = ",", col_names = F)
+
+
+colnames(oclussions_raw) <- seq(0, ncol(oclussions_raw) - 1, 1)
+
+
+oclussions_raw %>% mutate(gene = py$gene_names) %>% #mutate(gene = row_number()) %>% 
+  gather(key = position, value = score,  -gene) -> oclussions_long
+
+
+oclussions_long %>% mutate(position = as.numeric(position)) -> oclussions_long
+
+oclussions_long %>% filter(!between(position, 990,999), !between(position, 1290,1299), !between(position, 1640,1649))
+
+rollz<-function(x,w) {
+  avg=rollapply(x, width = w, na.pad = T, align = "right",  FUN = mean,  na.rm = T)
+  std=rollapply(x, width = w, na.pad = T, align = "right", FUN = sd, na.rm = T)
+  z=(x-avg)/std
+  return(z)
+}
+
+
+#1000,300,350,500 - 10 for window sieze
+oclussions_long %>% ungroup() %>% mutate(region = ifelse(between(position, 0, 989), "promoter", 
+                                        ifelse(between(position, 1000 , 1289), "5UTR", 
+                                         ifelse(between(position, 1300, 1639), "3UTR", 
+                                                ifelse(between(position, 1650, 2139), "terminator", NA))))) -> oclussions_long
+
+oclussions_long %>% group_by(gene, region) %>% arrange(gene, position) %>% 
+  mutate(#Z_score_roling = rollz(score, 20),
+        Z_score = (score - mean(score, na.rm = T))/sd(score, na.rm = T)) -> oclussions_long
+
+
+
+p_ocl <- oclussions_long %>% ungroup %>% filter(region != "NA") %>% 
+  mutate(region = fct_relevel(factor(region), "promoter", "5UTR", "3UTR", "terminator")) %>%
+  ggplot(aes(x = position, y = Z_score, colour = factor(gene)))+
+    geom_line(alpha = 0.1) + 
+    facet_grid(~region, scales = "free") +
+    ylim(-10,10) +
+    theme(legend.position = "none", aspect.ratio = 5/8)
+
+
+```
+
+
+```{r, fig.width=15}
+
+rstudioapi::jobRunScript("job_consensus_cluster.R", encoding = "unknown", workingDir = getwd(), 
+                         importEnv = TRUE, exportEnv = "R_GlobalEnv")
+
+```
+
+```{r fisher_fig, echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("regions_clustering_pam_pearson_K10_reps100/consensus012.png")
+```
+
+
+# Clustering of occlusions
+```{r, cache=T}
+load(paste(save_data_dir, paste("results", fun_name, "RData", sep = "." ), sep = "/")) #contains resuls of clustering
+
+
+k_clust = 5
+
+oclussions_long %>% ungroup() %>% filter(region == "5UTR") %>%
+  filter(gene %in%  names(results[[k_clust]]$consensusClass)) %>%
+  select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>%
+  tidy_pca -> matrix_regions
+
+Heatmap(matrix_regions, cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
+        show_column_names = F, clustering_distance_rows = "pearson",
+        split = results[[k_clust]]$consensusClass[match(rownames(matrix_regions), names(results[[k_clust]]$consensusClass))], 
+      gap = unit(3, "mm"), raster_quality = 10)
+# oclusions_nested <- oclusions_nested %>% 
+#   mutate(clustering = map(matrix, . %>% t() %>%
+#                            ConsensusClusterPlus(maxK=10,reps=50,pItem=0.8,pFeature=1, clusterAlg="pam",distance="pearson", seed=123, plot = "png")) )
+
+
+# oclusions_nested %>% mutate(consensusClass = map(clustering, function(x) { x[[3]]$consensusClass} ))
+# 
+# oclusions_nested <- oclusions_nested %>% mutate(consensusClass = map(clustering, function(x) { x[[3]]$consensusClass} ))
+
+
+
+oclusions_nested %>% filter(region == "5TUTR") -> toPlot
+Heatmap(toPlot$matrix[[1]][], cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
+        show_column_names = F, clustering_distance_rows = "pearson",
+        split = toPlot$consensusClass[[1]], gap = unit(3, "mm"), raster_quality = 10, use_raster = F)
+
+toPlot$matrix[[1]][,] %>% as_tibble(rownames = "gene" ) %>% left_join(as_tibble(toPlot$consensusClass[[1]], rownames = "gene" )) %>%
+  select(value, everything()) %>% rename(cluster = value)  %>% group_by(cluster) %>% tidyr::nest() %>% 
+  mutate(sumaries = map(data, . %>% tidy_pca %>% psych::describe(quant=c(0.05, .25,.75, 0.95)))) -> summaries
+
+summaries %>% tidyr::unnest(sumaries) %>% 
+  ggplot(aes(y = median, x = vars)) +
+    geom_ribbon(aes(x = vars,
+                    ymax = Q0.95, fill = factor(cluster), 
+                    ymin = Q0.05), alpha=0.1) +
+    geom_ribbon(aes(x = vars,  
+                    ymax = Q0.25, fill = factor(cluster),
+                    ymin = Q0.75), alpha=0.1) +
+    geom_line(aes(colour = factor(cluster)), size = 1 ) +
+    #facet_grid( ".~cluster" , scales = "free") +
+    theme(aspect.ratio = 5/8)
+
+toPlot$matrix[[3]][,] %>% prcomp()
+
+
+
+#summaries %>% tidyr::unnest(data) %>% select(cluster, gene) %>% 
+results[[5]]$consensusClass %>% as_tibble(rownames = "gene") %>% rename(cluster = value) %>%
+  left_join(gene2name, by = c("gene" = "ORF")) -> expression_cluster
+
+expression_cluster %>% 
+  mutate(cluster = factor(cluster), cluster = fct_reorder(cluster, value)) %>%
+  ggplot(aes(x = cluster, y = value)) +
+    geom_boxplot() +
+    geom_jitter(position=position_jitter(width=.2, height=0), alpha = 0.1)
+
+t.test((expression_cluster %>% filter(cluster == 1))$value %>% as.vector,
+       (expression_cluster %>% filter(cluster == 3))$value %>% as.vector)
+
+oclussions_long %>% left_join(gene2name, by = c("gene" = "ORF"))
+
+
+oclusions_nested <- oclussions_long %>% ungroup %>% group_by(region) %>% na.omit() %>% nest() %>%
+   mutate(matrix = map(data,  . %>% select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>% tidy_pca ))
+ 
+
+
+```
+
 
 ```{r fisher_fig, echo=FALSE, fig.cap="A caption", out.width = '100%'}
 knitr::include_graphics("misc_files/fisher.png")
 ```
 
+
+
+#Fisher test example
 ```{r}
 TeaTasting <- 
   matrix(c(3, 1, 1, 3),
@@ -220,13 +471,24 @@ stats <- item_counts %>% filter(both >= 3) %>% arrange(-both) %>%
   mutate(matrix_fisher = list(matrix(c(both, all_X1, all_X2, none), ncol = 2))) %>%
   mutate(fisher = map(matrix_fisher, fisher.test)) 
 
-
 stats %>% mutate(pval = map(fisher, function(x) {x$p.value})) %>% unnest(pval) %>% ungroup %>% mutate(padj = p.adjust(pval, method = "BH")) %>% filter(padj < 0.05)
 
 ```
 
 
-```{r }
-read_
 
+
+
+#PWM analysiss
+```{r fig.width=12}
+motifs.denovo = readMotifs(file ="../../data/2019-04-25/2019_2_18/dframe_pwms_o10_z2_09_8_7_ungapped-special.jaspar", remove.acc = F)
+
+
+data(ggseqlogo_sample)
+ggplot() + geom_logo( seqs_dna$MA0001.1 ) + theme_logo()
+
+motifs.denovo$`0_5 pwm`
 ```
+
+
+

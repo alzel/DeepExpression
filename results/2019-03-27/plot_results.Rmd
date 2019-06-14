@@ -12,6 +12,9 @@ library(UpSetR)
 library(ComplexHeatmap)
 library(zoo) 
 library(ggthemes)
+library(reticulate)
+use_python("/usr/local/bin/python")
+
 
 ```
 
@@ -115,10 +118,10 @@ ggsave(figure_path, p_joy_division + joy_division_theme + theme(aspect.ratio = 3
 
 
 figure_path = paste(figure_dir, "joy_division_white.pdf", sep = "/")
-ggsave(figure_path, p_white_division + white_theme + theme(aspect.ratio = 3/4), width = 20, height = 20)
+ggsave(figure_path, p_joy_division + white_theme + theme(aspect.ratio = 3/4), width = 20, height = 20)
 
+p_joy_division + white_theme + theme(aspect.ratio = 3/4)
 
-p_white_division
 ```
 ```{r}
 expression_data_raw %>%
@@ -345,7 +348,38 @@ ggsave(figure_path, p_codons)
 ```
 
 
+```{r}
+
+
+```
+
+
+```{python}
+import numpy as np
+
+def load_gene_names(fname):
+    npzfile = np.load(fname)
+    names_train = npzfile['arr_6']
+    names_test = npzfile['arr_7']
+    return names_train, names_test #np.concatenate((names_train,names_test))
+names_train, names_test = load_gene_names("/home/zrimec/projects/DeepExpression/2019_3_10/data/scerevisiae.rsd1.npz")
+
+print(gene_names)
+
+```
+
+```{r}
+
+
+py$names_test
+
+
+```
+
+
+
 ```{r, fig.width=15}
+
 
 rules <-  read_delim("/vault/DeepExpression/data/2019_3_27/rules_testdata_occlusion10z1_26_3_19_upset_all.csv", delim = ";")
 
@@ -369,6 +403,8 @@ rules_total %>%
     facet_wrap(minSupport~minConfidence, scales = "free")
 
 oclussions_raw <-  read_delim("/vault/DeepExpression/data/2019_3_27/predictions_rsd1_regions_merged_w10_18_3_19_rr_occlusions.csv", delim = ",")
+tmp <- read_delim("/home/zrimec/projects/DeepExpression/2019_2_18/occlusion10_wholeset_motifs_frame_z2.csv", delim = ";")
+
 
 oclussions_raw %>% mutate(gene = row_number()) %>%
   gather(key = position, value = score,  -gene) -> oclussions_long
@@ -382,7 +418,8 @@ rollz<-function(x,w) {
   z=(x-avg)/std
   return(z)
 }
-max(unique(oclussions_long$position))
+
+
 #1000,300,350,500 - 10 for window sieze
 oclussions_long %>% ungroup() %>% mutate(region = ifelse(between(position, 0, 989), "promoter", 
                                         ifelse(between(position, 1000 , 1289), "5UTR", 
@@ -420,9 +457,6 @@ oclussions_long %>% ungroup %>% filter(region != "NA") %>%
         axis.text.y = element_text(color = "grey20", size = 12, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
         axis.title.x = element_text(color = "grey20", size = 28, angle = 0, hjust = .5, vjust = 0, face = "plain"),
         axis.title.y = element_text(color = "grey20", size = 28, angle = 90, hjust = .5, vjust = .5, face = "plain"))
-
-
-
 
 ```
 
@@ -481,6 +515,9 @@ summaries %>% tidyr::unnest(sumaries) %>%
 ```
 
 
+
+
+
 ```{r, fig.width=10}
 data_path = "./Evolutionary_rate_Fungi"
 
@@ -500,7 +537,6 @@ data_nested <- data %>% gather(variable, value, -Gene,-filename) %>% spread(file
   nest() %>%
   mutate(matrix = map(data, . %>% na.omit %>% tidy_pca %>% cor(.,method = "spearman")))
   
-cor
 library(GGally)
 data_nested %>% filter(variable == "Median")
 data_nested$matrix
