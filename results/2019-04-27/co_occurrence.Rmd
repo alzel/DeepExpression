@@ -94,7 +94,20 @@ tomtom_pairwise <- read_delim(tomtom_pairfwise_path, delim = "\t", col_names = T
 ```
 
 
-# Applying pornography to get gene names
+
+```{r}
+#expression_data_raw <- read_delim("../../data/2018-09-19/Scerevisiae_DDE_QC-filtered-18_7_18.csv", delim = ";")
+#expression_data_raw <- expression_data_raw %>% dplyr::select(-X1)
+expression_long_raw <- read_delim("../../data/2019-07-17/paper-z1_data/scerevisiae_tpm_full_cut5.csv", delim = ",")
+
+expression_data_raw <- expression_long_raw %>% reshape2::dcast("sample_id~gene_id", value.var = "TPM") %>% select(-sample_id)
+expression_data_raw %>%
+  psych::describe(quant=c(0.025, 0.16, .25, 0.5,0.84, .75, 0.975)) %>%
+  as_tibble(rownames = "ORF") -> expression_data_raw.summary
+
+```
+
+
 ```{python}
 import numpy as np
 
@@ -102,19 +115,12 @@ def load_gene_names(fname):
     npzfile = np.load(fname)
     names_train = npzfile['arr_6']
     names_test = npzfile['arr_7']
+    len_orf_train = npzfile['arr_2'][:, 1]
+    len_orf_test = npzfile['arr_3'][:, 1]
+    return np.concatenate((names_train, names_test)), np.concatenate((len_orf_train, len_orf_test)) 
     
-    Y_train = npzfile['arr_4']
-    Y_test = npzfile['arr_5']
-    
-    Y_train = Y_train.astype(np.float32).reshape((-1, 1))
-    Y_test = Y_test.astype(np.float32).reshape((-1, 1))
-    
-    return (np.concatenate((names_train,names_test)), np.concatenate((Y_train,Y_test)))
-
-gene_names, gene_values = load_gene_names("../../data/2019-05-29/2019_3_10/data/scerevisiae.rsd1.npz")
-
-
-
+#names_train, names_test = load_gene_names("/home/zrimec/projects/DeepExpression/2019_3_10/data/scerevisiae.rsd1.npz")
+names, len_orf = load_gene_names("/home/alezel/projects/DeepExpression/scerevisiae.rsd1.lmbda_22.npz")
 
 ```
 
@@ -231,11 +237,12 @@ filtered_jaspar %>%
 ```{r, fig.width=15}
 #oclussions_raw <- read_delim("../../data/2019-04-25/2019_2_18/relevance_predictions_wholeset_rsd1_regions_merged_w10_19_3_19.csv", delim = ",", col_names = F)
 
-oclussions_raw <- read_delim("../../data/2019-04-25/2019_6_3/relevance_rsd1_lmbda022_w10.reg_cf", delim = ",", col_names = F)
+
+#oclussions_raw <- read_delim("../../data/2019-04-25/2019_6_3/relevance_rsd1_lmbda022_w10.reg_cf", delim = ",", col_names = F)
+oclussions_raw <- read_delim("../../data/2019-07-17/paper-z1_data/relevance_rsd1_lmbda022_w10.regions", delim = ",", col_names = F)
 
 
 colnames(oclussions_raw) <- seq(0, ncol(oclussions_raw) - 1, 1)
-
 
 oclussions_raw %>% mutate(gene = py$gene_names) %>% #mutate(gene = row_number()) %>% 
   gather(key = position, value = score,  -gene) -> oclussions_long
@@ -264,7 +271,6 @@ oclussions_long %>% group_by(gene, region) %>% arrange(gene, position) %>%
         Z_score = (score - mean(score, na.rm = T))/sd(score, na.rm = T)) -> oclussions_long
 
 
-
 p_ocl <- oclussions_long %>% ungroup %>% filter(region != "NA") %>% 
   mutate(region = fct_relevel(factor(region), "promoter", "5UTR", "3UTR", "terminator")) %>%
   ggplot(aes(x = position, y = Z_score, colour = factor(gene)))+
@@ -287,24 +293,38 @@ rstudioapi::jobRunScript("job_consensus_cluster.R", encoding = "unknown", workin
 ```{r fisher_fig, echo=FALSE, fig.cap="A caption", out.width = '100%'}
 knitr::include_graphics("regions_clustering_pam_pearson_K10_reps100/consensus012.png")
 ```
+4 clusters decided
+
+```{r}
+load("regions_clustering_pam_pearson_K10_reps100/consensus_clustering.Rdata")
+k_clust = 4
+
+as_tibble(consensus_clustering[[k_clust]]$consensusClass, rownames = "gene" ) %>% rename(cluster = value) -> consensus_gene_clusters
+
+consensus_gene_clusters %>% write_csv(paste("output_files/consensus_gene_clusters", "_", k_clust, ".csv", sep = ""))
+
+```
+
+
 
 
 # Clustering of occlusions
 ```{r, cache=T}
-load(paste(save_data_dir, paste("results", fun_name, "RData", sep = "." ), sep = "/")) #contains resuls of clustering
-
-
-k_clust = 5
 
 oclussions_long %>% ungroup() %>% filter(region == "5UTR") %>%
-  filter(gene %in%  names(results[[k_clust]]$consensusClass)) %>%
+  filter(gene %in%  consensus_gene_clusters$gene) %>%
   select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>%
   tidy_pca -> matrix_regions
 
 Heatmap(matrix_regions, cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
         show_column_names = F, clustering_distance_rows = "pearson",
-        split = results[[k_clust]]$consensusClass[match(rownames(matrix_regions), names(results[[k_clust]]$consensusClass))], 
+        split = consensus_gene_clusters$cluster[match(rownames(matrix_regions), consensus_gene_clusters$gene)], 
       gap = unit(3, "mm"), raster_quality = 10)
+
+
+oclusions_nested <- oclussions_long %>% ungroup %>% group_by(region) %>% na.omit() %>% nest() %>%
+   mutate(matrix = map(data,  . %>% select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>% tidy_pca ))
+
 # oclusions_nested <- oclusions_nested %>% 
 #   mutate(clustering = map(matrix, . %>% t() %>%
 #                            ConsensusClusterPlus(maxK=10,reps=50,pItem=0.8,pFeature=1, clusterAlg="pam",distance="pearson", seed=123, plot = "png")) )
@@ -316,13 +336,14 @@ Heatmap(matrix_regions, cluster_columns = F, clustering_method_rows = "ward.D2",
 
 
 
-oclusions_nested %>% filter(region == "5TUTR") -> toPlot
-Heatmap(toPlot$matrix[[1]][], cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
-        show_column_names = F, clustering_distance_rows = "pearson",
-        split = toPlot$consensusClass[[1]], gap = unit(3, "mm"), raster_quality = 10, use_raster = F)
+# oclusions_nested %>% filter(region == "5TUTR") -> toPlot
+# Heatmap(toPlot$matrix[[1]][], cluster_columns = F, clustering_method_rows = "ward.D2", show_row_names = F, 
+#         show_column_names = F, clustering_distance_rows = "pearson",
+#         split = toPlot$consensusClass[[1]], gap = unit(3, "mm"), raster_quality = 10, use_raster = F)
 
-toPlot$matrix[[1]][,] %>% as_tibble(rownames = "gene" ) %>% left_join(as_tibble(toPlot$consensusClass[[1]], rownames = "gene" )) %>%
-  select(value, everything()) %>% rename(cluster = value)  %>% group_by(cluster) %>% tidyr::nest() %>% 
+oclusions_nested %>% filter(region == "5UTR") -> toPlot
+toPlot$matrix[[1]][,] %>% as_tibble(rownames = "gene" ) %>% left_join(consensus_gene_clusters) %>%
+  select(cluster, everything()) %>% group_by(cluster) %>% tidyr::nest() %>% 
   mutate(sumaries = map(data, . %>% tidy_pca %>% psych::describe(quant=c(0.05, .25,.75, 0.95)))) -> summaries
 
 summaries %>% tidyr::unnest(sumaries) %>% 
@@ -340,25 +361,27 @@ summaries %>% tidyr::unnest(sumaries) %>%
 toPlot$matrix[[3]][,] %>% prcomp()
 
 
-
 #summaries %>% tidyr::unnest(data) %>% select(cluster, gene) %>% 
-results[[5]]$consensusClass %>% as_tibble(rownames = "gene") %>% rename(cluster = value) %>%
+consensus_clustering[[4]]$consensusClass %>% as_tibble(rownames = "gene") %>% rename(cluster = value) %>%
+  left_join(expression_data_raw.summary, by = c("gene" = "ORF")) -> expression_cluster
+
+consensus_clustering[[4]]$consensusClass %>% as_tibble(rownames = "gene") %>% rename(cluster = value) %>%
   left_join(gene2name, by = c("gene" = "ORF")) -> expression_cluster
 
 expression_cluster %>% 
   mutate(cluster = factor(cluster), cluster = fct_reorder(cluster, value)) %>%
   ggplot(aes(x = cluster, y = value)) +
     geom_boxplot() +
+    #scale_y_log10() +
     geom_jitter(position=position_jitter(width=.2, height=0), alpha = 0.1)
 
-t.test((expression_cluster %>% filter(cluster == 1))$value %>% as.vector,
-       (expression_cluster %>% filter(cluster == 3))$value %>% as.vector)
+wilcox.test((expression_cluster %>% filter(cluster == 1))$Q0.5 %>% as.vector,
+            (expression_cluster %>% filter(cluster == 2))$Q0.5 %>% as.vector)
 
 oclussions_long %>% left_join(gene2name, by = c("gene" = "ORF"))
 
 
-oclusions_nested <- oclussions_long %>% ungroup %>% group_by(region) %>% na.omit() %>% nest() %>%
-   mutate(matrix = map(data,  . %>% select(gene, position, Z_score) %>% spread(position, Z_score) %>% na.omit() %>% tidy_pca ))
+
  
 
 
@@ -474,8 +497,6 @@ stats <- item_counts %>% filter(both >= 3) %>% arrange(-both) %>%
 stats %>% mutate(pval = map(fisher, function(x) {x$p.value})) %>% unnest(pval) %>% ungroup %>% mutate(padj = p.adjust(pval, method = "BH")) %>% filter(padj < 0.05)
 
 ```
-
-
 
 
 

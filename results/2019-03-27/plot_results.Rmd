@@ -68,7 +68,47 @@ tidy_pca = function(x) {
 expression_data_raw <- read_delim("../../data/2018-09-19/Scerevisiae_DDE_QC-filtered-18_7_18.csv", delim = ";")
 expression_data_raw <- expression_data_raw %>% dplyr::select(-X1)
 # human_raw <- read_delim("/vault/DeepExpression/data/hsapiens_se.tsv.sampled", delim = "\t", col_names = F)
+
+go_slim <- read_delim("https://downloads.yeastgenome.org/curation/literature/go_slim_mapping.tab", delim = "\t", col_names = F)
+
+GO_slim.selected =  go_slim %>% dplyr::select(X6,X1,X5,X4)
+names(GO_slim.selected) = c("pathway", "ORF", "description", "type")
+  
+GO_slim.compartment =  GO_slim.selected %>% filter(type=="C")
+GO_slim.process     =  GO_slim.selected %>% filter(type=="P")
+GO_slim.function    =  GO_slim.selected %>% filter(type=="F")
+
+
+```
+
+```{r get_data}
+# data_dir = "../../data/2019-07-13"
+# system(paste("mkdir -p ", data_dir, sep = " " ))
 # 
+# command = paste("wget  -v -O", paste(data_dir, 'scerevisiae.rsd1.lmbda_22.npz', sep = "/"), "-L",
+# "https://chalmersuniversity.box.com/shared/static/xn92o57wa9g3tj5fkxpk9mqkfb9w790y.npz")
+# 
+# system(command)
+```
+
+```{python}
+import numpy as np
+
+def load_gene_names(fname):
+    npzfile = np.load(fname)
+    names_train = npzfile['arr_6']
+    names_test = npzfile['arr_7']
+    len_orf_train = npzfile['arr_2'][:, 1]
+    len_orf_test = npzfile['arr_3'][:, 1]
+    return np.concatenate((names_train, names_test)), np.concatenate((len_orf_train, len_orf_test)) 
+    
+#names_train, names_test = load_gene_names("/home/zrimec/projects/DeepExpression/2019_3_10/data/scerevisiae.rsd1.npz")
+names, len_orf = load_gene_names("/home/alezel/projects/DeepExpression/scerevisiae.rsd1.lmbda_22.npz")
+
+```
+
+```{r}
+cds2len = tibble(ORF = py$names, len_orf = py$len_orf)
 
 ```
 
@@ -124,6 +164,10 @@ p_joy_division + white_theme + theme(aspect.ratio = 3/4)
 
 ```
 ```{r}
+
+library(gridExtra)      
+
+
 expression_data_raw %>%
   psych::describe(quant=c(0.025, 0.16, .25, 0.5,0.84, .75, 0.975)) %>%
   as_tibble(rownames = "ORF") -> expression_data_raw.summary
@@ -138,13 +182,13 @@ expression_data_long <- expression_data_raw %>% as.tibble %>% mutate(experiment 
 #   as_tibble(rownames = "ORF") -> human_raw_wide.summary
 
 #GAPDH
-expression_data_long %>% filter(gene == "YJL052W") %>%
-  ggplot(aes(x = value)) +
-  geom_density() +
-  scale_x_log10()
+# expression_data_long %>% filter(gene == "YJL052W") %>%
+#   ggplot(aes(x = value)) +
+#   geom_density() +
+#   scale_x_log10()
+# 
 
-
-p_yeast <- expression_data_raw.summary %>% arrange(Q0.5) %>% filter(Q0.5>0) %>%
+p_yeast <- expression_data_raw.summary %>% arrange(Q0.5) %>% filter(Q0.5 > 1) %>%
   mutate(ORF = factor(ORF, levels = ORF)) %>%
   ggplot() +
     geom_line(aes(x = as.numeric(ORF), y = Q0.5/2)) +
@@ -158,28 +202,133 @@ p_yeast <- expression_data_raw.summary %>% arrange(Q0.5) %>% filter(Q0.5>0) %>%
                      ymin = Q0.025 ), alpha=0.2, fill = "blue") +
     geom_line(aes(x = as.numeric(ORF), y = Q0.5), colour = "red") +
     labs(x = "Yeast protein coding gene" ,
-         y = "Gene expression levels across >6000 experiments,log-scaled TMP"  ) +   
-    scale_y_log10() +
-    coord_flip() + theme_few()  + theme(aspect.ratio = 5/8)
-
-        
+         y = "Gene expression levels across >6000 experiments,log-scaled TMP") +
+    scale_y_log10() + 
+    coord_flip() 
+      
+ 
 figure_path = paste(figure_dir, "p_yeast.pdf", sep = "/")
 ggsave(figure_path, p_yeast)
-# p_human <- human_raw_wide.summary %>% arrange(Q0.5) %>% filter(Q0.5>5) %>%
-#   mutate(ORF = factor(ORF, levels = ORF)) %>%
-#   ggplot() +
-#     geom_line(aes(x = as.numeric(ORF), y = Q0.5/2)) +
-#     geom_line(aes(x = as.numeric(ORF), y = Q0.5*2)) +
-#     geom_line(aes(x = as.numeric(ORF), y = Q0.5)) +
-#     geom_ribbon(aes(x = as.numeric(ORF),
-#                      ymax =  Q0.84,
-#                      ymin = Q0.16 ), alpha=0.3, fill = "blue") +
-#     # geom_ribbon(aes(x = as.numeric(ORF),
-#     #                  ymax =  Q0.975,
-#     #                  ymin = Q0.025 ), alpha=0.1, fill = "blue") +
-#     scale_y_log10() +
-#     coord_flip() 
-                
+
+
+
+
+hist_top <- expression_data_raw.summary %>% filter(Q0.5>5) %>%
+  ggplot(aes(x = Q0.5))  +
+    geom_histogram(fill = "black", colour = "white") + 
+    scale_x_log10(limits = c(1,1000)) +
+    theme(legend.position = "none",          
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank(),
+       axis.text.x = element_blank(),
+       axis.text.y = element_blank())
+ 
+     
+
+empty <- ggplot()+geom_point(aes(1,1), colour="white")+
+         theme(axis.ticks=element_blank(), 
+               panel.background=element_blank(), 
+               axis.text.x=element_blank(), axis.text.y=element_blank(),           
+               axis.title.x=element_blank(), axis.title.y=element_blank())
+
+
+
+grid.arrange(hist_top, empty, p_yeast, ncol=2, nrow=2, widths=c(4, 1), heights=c(1, 4))
+
+
+```
+Total number of genes is `r expression_data_raw.summary %>% distinct(ORF) %>% count %>% as.vector`
+
+```{r}
+expression_data_raw.summary %>% distinct(ORF) %>% count %>% unlist(use.names = F)
+
+
+expression_data_raw.summary %>% filter(Q0.5>5) %>% mutate(within = ifelse( Q0.5/2 < Q0.16 | Q0.5*2 > Q0.84, 1, 0)) %>% group_by(within) %>% count()
+
+3712/(3712+983)
+
+
+expression_data_raw.summary %>% mutate(var_ratio = var(expression_data_raw.summary$Q0.5)/sd^2) %>%
+  ggplot(aes(x = var_ratio)) +
+    geom_histogram() +
+    geom_vline(xintercept = mean((expression_data_raw.summary %>% mutate(var_ratio = var(expression_data_raw.summary$Q0.5)/sd^2))$var_ratio, na.rm = T), colour = "red") +
+    scale_x_log10(breaks = c(0.01, 0.1, 1, 10, 100, 1000)) +
+    theme_classic()
+
+
+
+```
+
+
+```{r}
+pathway_enrichments = function(orf_thr, orf_universe, pathway2orf ) {
+
+  pathway2orf.universe = pathway2orf %>% filter(ORF %in% orf_universe)
+  pathway2orf.thr      = pathway2orf %>% filter(ORF %in% orf_thr)
+    
+  pathway.signal = pathway2orf.thr %>% group_by(pathway) %>% count() %>% rename(count = n)
+  pathway.universe = pathway2orf.universe %>% group_by(pathway) %>% count() %>% rename(count = n)
+  
+  pathway.merged = left_join(pathway.signal, pathway.universe, by="pathway", suffix = c(".signal", ".universe"))
+  
+  total.universe = length(unique(pathway2orf.universe$ORF))
+  total.signal   = length(unique(pathway2orf.thr$ORF))
+  
+  pathway.counts = pathway.merged %>% group_by(pathway) %>%
+    mutate(notSignal.inPath = count.universe - count.signal,
+           Signal.notinPath = total.signal - count.signal,
+           notSignal.notinPath = total.universe - notSignal.inPath )
+  
+  pathway.counts$description = pathway2orf$description[match(pathway.counts$pathway, pathway2orf$pathway)]
+  
+  pathway.counts =  pathway.counts %>% group_by(pathway) %>%             
+    mutate(p.value = 1 - phyper(q=count.signal-1, m=total.signal, n=total.universe-total.signal,  k=count.universe, lower.tail=T))
+  
+  pathway.counts$p.adj = p.adjust(pathway.counts$p.value, method="BH")
+
+  return(pathway.counts)
+}
+
+
+expression_data_summary <- expression_data_long %>% 
+  group_by(gene) %>% 
+  summarise(median = median(value, na.rm = T),
+            mean = mean(value, na.rm =T),
+            sd = sd(value, na.rm = T),
+            RSD = sd/mean)
+
+expression_data_summary %>% ungroup() %>% filter(median > 5) %>%
+  summarize(total = n(),
+            rsd1 = sum(RSD < 1)/total,
+            rsd2 = sum(RSD < 2)/total,
+            rsd3 = sum(RSD < 3)/total) -> toPlot_summary
+
+expression_data_summary %>% filter(RSD >1) %>% select(gene) %>% unlist(use.names = F) -> orf_thr
+expression_data_summary %>% select(gene) %>% unlist(use.names = F) -> orf_universe
+  
+slim_function = pathway_enrichments(orf_thr, orf_universe, pathway2orf = GO_slim.function)
+slim_process = pathway_enrichments(orf_thr, orf_universe, pathway2orf = GO_slim.process)
+
+slim_function %>% filter(pathway != "GO:0003674", p.adj < 0.05)
+slim_process %>% filter(pathway != "GO:0008150", p.adj < 0.05)
+
+
+expression_data_summary %>%
+  ggplot(aes(x = RSD)) +
+    geom_histogram(binwidth = 0.1, fill = "black", colour = "white") +
+    geom_vline(xintercept = 1, , linetype = 3) +
+    xlim(0, 3) +
+    ylim(0, 1100) +
+    annotate("text", x = 0.1 , y = 1050, label = paste(round(toPlot_summary$rsd1*100, 2), "%", sep="")) +
+    theme_bw()
+
+expression_data_summary %>% filter(median > 5) %>%
+  ggplot(aes(x = sqrtmedian))  +
+    geom_histogram(fill = "black", colour = "white") + 
+    scale_x_log10() + theme_few()
+
+
+
 ```
 
 ```{r}
@@ -354,27 +503,7 @@ ggsave(figure_path, p_codons)
 ```
 
 
-```{python}
-import numpy as np
 
-def load_gene_names(fname):
-    npzfile = np.load(fname)
-    names_train = npzfile['arr_6']
-    names_test = npzfile['arr_7']
-    return names_train, names_test #np.concatenate((names_train,names_test))
-names_train, names_test = load_gene_names("/home/zrimec/projects/DeepExpression/2019_3_10/data/scerevisiae.rsd1.npz")
-
-print(gene_names)
-
-```
-
-```{r}
-
-
-py$names_test
-
-
-```
 
 
 
